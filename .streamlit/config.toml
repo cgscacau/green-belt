@@ -7,3 +7,5 @@ textColor="#e8f0ff"
 
 [server]
 maxUploadSize = 200
+enableXsrfProtection = false
+enableCORS = false
