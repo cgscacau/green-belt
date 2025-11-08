@@ -2,8 +2,13 @@ import streamlit as st
 from pathlib import Path
 from datetime import datetime
 import json
-from app.components.upload_and_store import init_catalog, save_upload, RESULTS
-from app.components.reports import render_html_report
+import sys
+
+# Adiciona o diretório pai ao path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from components.upload_and_store import init_catalog, save_upload, RESULTS
+from components.reports import render_html_report
 
 st.set_page_config(page_title="Define", page_icon="🔎", layout="wide")
 init_catalog()
