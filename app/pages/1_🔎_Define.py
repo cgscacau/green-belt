@@ -37,12 +37,16 @@ if 'current_project_id' not in st.session_state or not st.session_state.current_
 st.title("🎯 Define - Definição do Projeto")
 st.info(f"📁 Projeto: **{st.session_state.get('current_project_name', 'Não identificado')}**")
 
-# Carregar dados existentes do charter
+# Carregar dados existentes do charter com tratamento de erro
 try:
     charter_response = supabase.table('project_charter').select("*").eq('project_id', st.session_state.current_project_id).execute()
     existing_charter = charter_response.data[0] if charter_response.data else {}
 except Exception as e:
     st.error(f"Erro ao carregar charter: {e}")
+    existing_charter = {}
+
+# Garantir que existing_charter é sempre um dicionário
+if not existing_charter:
     existing_charter = {}
 
 # Tabs
@@ -182,9 +186,19 @@ with tab1:
             )
         
         with col2:
+            # Tratar data de aprovação com segurança
+            approval_date_value = existing_charter.get('approval_date', None)
+            if approval_date_value:
+                try:
+                    approval_date_default = datetime.strptime(approval_date_value, '%Y-%m-%d').date()
+                except:
+                    approval_date_default = datetime.now().date()
+            else:
+                approval_date_default = datetime.now().date()
+            
             approval_date = st.date_input(
                 "Data de Aprovação",
-                value=datetime.strptime(existing_charter.get('approval_date', datetime.now().isoformat()), '%Y-%m-%d').date() if existing_charter.get('approval_date') else datetime.now().date()
+                value=approval_date_default
             )
         
         with col3:
@@ -247,16 +261,30 @@ with tab2:
             col1_1, col2_1, col3_1 = st.columns(3)
             
             with col1_1:
+                # Tratar valores numéricos com segurança
+                current_value = existing_charter.get('primary_metric_current', 0)
+                try:
+                    current_value = float(current_value) if current_value else 0.0
+                except:
+                    current_value = 0.0
+                
                 metric_current = st.number_input(
                     "Valor Atual (Baseline)",
-                    value=float(existing_charter.get('primary_metric_current', 0)),
+                    value=current_value,
                     step=0.01
                 )
             
             with col2_1:
+                # Tratar valores numéricos com segurança
+                target_value = existing_charter.get('primary_metric_target', 0)
+                try:
+                    target_value = float(target_value) if target_value else 0.0
+                except:
+                    target_value = 0.0
+                
                 metric_target = st.number_input(
                     "Valor Meta",
-                    value=float(existing_charter.get('primary_metric_target', 0)),
+                    value=target_value,
                     step=0.01
                 )
             
@@ -286,7 +314,13 @@ with tab2:
                         'primary_metric_unit': metric_unit
                     }
                     
-                    supabase.table('project_charter').update(update_data).eq('project_id', st.session_state.current_project_id).execute()
+                    if existing_charter:
+                        supabase.table('project_charter').update(update_data).eq('project_id', st.session_state.current_project_id).execute()
+                    else:
+                        # Se não existe charter, criar um novo
+                        update_data['project_id'] = st.session_state.current_project_id
+                        supabase.table('project_charter').insert(update_data).execute()
+                    
                     st.success("✅ Métrica principal atualizada!")
                     st.rerun()
                     
@@ -296,41 +330,51 @@ with tab2:
     with col2:
         st.subheader("Visualização da Meta")
         
-        if existing_charter.get('primary_metric_current') and existing_charter.get('primary_metric_target'):
-            current = float(existing_charter.get('primary_metric_current', 0))
-            target = float(existing_charter.get('primary_metric_target', 0))
-            
-            # Gauge chart
-            fig = go.Figure(go.Indicator(
-                mode = "gauge+number+delta",
-                value = current,
-                delta = {'reference': target, 'relative': True},
-                title = {'text': existing_charter.get('primary_metric', 'Métrica')},
-                domain = {'x': [0, 1], 'y': [0, 1]},
-                gauge = {
-                    'axis': {'range': [None, max(current, target) * 1.2]},
-                    'bar': {'color': "darkblue"},
-                    'steps': [
-                        {'range': [0, target], 'color': "lightgray"},
-                        {'range': [target, max(current, target) * 1.2], 'color': "gray"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "red", 'width': 4},
-                        'thickness': 0.75,
-                        'value': target
+        # Verificar se existem valores antes de criar o gráfico
+        if existing_charter and existing_charter.get('primary_metric_current') and existing_charter.get('primary_metric_target'):
+            try:
+                current = float(existing_charter.get('primary_metric_current', 0))
+                target = float(existing_charter.get('primary_metric_target', 0))
+                
+                # Gauge chart
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number+delta",
+                    value = current,
+                    delta = {'reference': target, 'relative': True},
+                    title = {'text': existing_charter.get('primary_metric', 'Métrica')},
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    gauge = {
+                        'axis': {'range': [None, max(current, target) * 1.2]},
+                        'bar': {'color': "darkblue"},
+                        'steps': [
+                            {'range': [0, target], 'color': "lightgray"},
+                            {'range': [target, max(current, target) * 1.2], 'color': "gray"}
+                        ],
+                        'threshold': {
+                            'line': {'color': "red", 'width': 4},
+                            'thickness': 0.75,
+                            'value': target
+                        }
                     }
-                }
-            ))
-            
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+                ))
+                
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+            except:
+                st.info("Configure a métrica principal para visualizar o gráfico")
+        else:
+            st.info("Configure a métrica principal para visualizar o gráfico")
     
     # Métricas Secundárias
     st.divider()
     st.subheader("Métricas Secundárias")
     
-    # Carregar métricas secundárias existentes
-    secondary_metrics = existing_charter.get('secondary_metrics', []) if existing_charter else []
+    # Carregar métricas secundárias existentes com tratamento seguro
+    secondary_metrics = []
+    if existing_charter and 'secondary_metrics' in existing_charter:
+        secondary_metrics = existing_charter.get('secondary_metrics', [])
+        if not isinstance(secondary_metrics, list):
+            secondary_metrics = []
     
     col1, col2 = st.columns([3, 1])
     
@@ -358,15 +402,18 @@ with tab2:
                         'unit': sec_unit
                     }
                     
-                    if not isinstance(secondary_metrics, list):
-                        secondary_metrics = []
-                    
                     secondary_metrics.append(new_metric)
                     
                     try:
-                        supabase.table('project_charter').update({
-                            'secondary_metrics': secondary_metrics
-                        }).eq('project_id', st.session_state.current_project_id).execute()
+                        if existing_charter:
+                            supabase.table('project_charter').update({
+                                'secondary_metrics': secondary_metrics
+                            }).eq('project_id', st.session_state.current_project_id).execute()
+                        else:
+                            supabase.table('project_charter').insert({
+                                'project_id': st.session_state.current_project_id,
+                                'secondary_metrics': secondary_metrics
+                            }).execute()
                         
                         st.success(f"✅ Métrica '{sec_name}' adicionada!")
                         st.rerun()
@@ -389,11 +436,19 @@ with tab3:
     with st.form("sipoc_form"):
         col1, col2, col3, col4, col5 = st.columns(5)
         
+        # Função auxiliar para obter lista segura
+        def get_list_from_charter(key):
+            if existing_charter and key in existing_charter:
+                value = existing_charter.get(key, [])
+                if isinstance(value, list):
+                    return '\n'.join(value)
+            return ''
+        
         with col1:
             st.subheader("Suppliers")
             suppliers = st.text_area(
                 "Fornecedores",
-                value='\n'.join(existing_charter.get('suppliers', [])) if existing_charter else '',
+                value=get_list_from_charter('suppliers'),
                 height=300,
                 placeholder="• Fornecedor 1\n• Fornecedor 2\n• Departamento X",
                 help="Quem fornece as entradas para o processo?"
@@ -403,7 +458,7 @@ with tab3:
             st.subheader("Inputs")
             inputs = st.text_area(
                 "Entradas",
-                value='\n'.join(existing_charter.get('inputs', [])) if existing_charter else '',
+                value=get_list_from_charter('inputs'),
                 height=300,
                 placeholder="• Matéria-prima\n• Informações\n• Requisições",
                 help="O que entra no processo?"
@@ -413,7 +468,7 @@ with tab3:
             st.subheader("Process")
             process_steps = st.text_area(
                 "Processo",
-                value='\n'.join(existing_charter.get('process_steps', [])) if existing_charter else '',
+                value=get_list_from_charter('process_steps'),
                 height=300,
                 placeholder="1. Receber pedido\n2. Processar\n3. Validar\n4. Entregar",
                 help="Principais etapas do processo (alto nível)"
@@ -423,7 +478,7 @@ with tab3:
             st.subheader("Outputs")
             outputs = st.text_area(
                 "Saídas",
-                value='\n'.join(existing_charter.get('outputs', [])) if existing_charter else '',
+                value=get_list_from_charter('outputs'),
                 height=300,
                 placeholder="• Produto final\n• Relatórios\n• Serviço entregue",
                 help="O que sai do processo?"
@@ -433,7 +488,7 @@ with tab3:
             st.subheader("Customers")
             customers = st.text_area(
                 "Clientes",
-                value='\n'.join(existing_charter.get('customers', [])) if existing_charter else '',
+                value=get_list_from_charter('customers'),
                 height=300,
                 placeholder="• Cliente final\n• Próximo processo\n• Departamento Y",
                 help="Quem recebe as saídas do processo?"
@@ -451,7 +506,12 @@ with tab3:
             }
             
             try:
-                supabase.table('project_charter').update(sipoc_data).eq('project_id', st.session_state.current_project_id).execute()
+                if existing_charter:
+                    supabase.table('project_charter').update(sipoc_data).eq('project_id', st.session_state.current_project_id).execute()
+                else:
+                    sipoc_data['project_id'] = st.session_state.current_project_id
+                    supabase.table('project_charter').insert(sipoc_data).execute()
+                
                 st.success("✅ SIPOC salvo com sucesso!")
                 st.rerun()
                 
@@ -467,12 +527,18 @@ with tab3:
         st.subheader("Visualização do Fluxo SIPOC")
         
         # Criar visualização simples
+        def get_first_items(key, n=3):
+            items = existing_charter.get(key, [])
+            if isinstance(items, list):
+                return ', '.join(items[:n])
+            return ''
+        
         sipoc_df = pd.DataFrame({
-            'Suppliers': [', '.join(existing_charter.get('suppliers', [])[:3])],
-            'Inputs': [', '.join(existing_charter.get('inputs', [])[:3])],
-            'Process': [', '.join(existing_charter.get('process_steps', [])[:3])],
-            'Outputs': [', '.join(existing_charter.get('outputs', [])[:3])],
-            'Customers': [', '.join(existing_charter.get('customers', [])[:3])]
+            'Suppliers': [get_first_items('suppliers')],
+            'Inputs': [get_first_items('inputs')],
+            'Process': [get_first_items('process_steps')],
+            'Outputs': [get_first_items('outputs')],
+            'Customers': [get_first_items('customers')]
         })
         
         st.dataframe(sipoc_df, use_container_width=True, hide_index=True)
@@ -518,17 +584,25 @@ with tab4:
                     'strategy': stake_strategy
                 }
                 
-                # Carregar stakeholders existentes
-                stakeholders = existing_charter.get('stakeholders', []) if existing_charter else []
-                if not isinstance(stakeholders, list):
-                    stakeholders = []
+                # Carregar stakeholders existentes com segurança
+                stakeholders = []
+                if existing_charter and 'stakeholders' in existing_charter:
+                    stakeholders = existing_charter.get('stakeholders', [])
+                    if not isinstance(stakeholders, list):
+                        stakeholders = []
                 
                 stakeholders.append(new_stakeholder)
                 
                 try:
-                    supabase.table('project_charter').update({
-                        'stakeholders': stakeholders
-                    }).eq('project_id', st.session_state.current_project_id).execute()
+                    if existing_charter:
+                        supabase.table('project_charter').update({
+                            'stakeholders': stakeholders
+                        }).eq('project_id', st.session_state.current_project_id).execute()
+                    else:
+                        supabase.table('project_charter').insert({
+                            'project_id': st.session_state.current_project_id,
+                            'stakeholders': stakeholders
+                        }).execute()
                     
                     st.success(f"✅ Stakeholder '{stake_name}' adicionado!")
                     st.rerun()
@@ -539,7 +613,12 @@ with tab4:
     with col2:
         st.subheader("Matriz de Stakeholders")
         
-        stakeholders = existing_charter.get('stakeholders', []) if existing_charter else []
+        # Carregar stakeholders com segurança
+        stakeholders = []
+        if existing_charter and 'stakeholders' in existing_charter:
+            stakeholders = existing_charter.get('stakeholders', [])
+            if not isinstance(stakeholders, list):
+                stakeholders = []
         
         if stakeholders:
             # Criar matriz de influência x interesse
@@ -611,6 +690,7 @@ with tab4:
         else:
             st.info("Nenhum stakeholder cadastrado ainda.")
 
+# Continuar com as outras tabs...
 # Tab 5: VOC e CTQ
 with tab5:
     st.header("Voz do Cliente (VOC) e Características Críticas para a Qualidade (CTQ)")
@@ -648,16 +728,25 @@ with tab5:
                     'date': voc_date.isoformat()
                 }
                 
-                voc_data = existing_charter.get('voc_data', []) if existing_charter else []
-                if not isinstance(voc_data, list):
-                    voc_data = []
+                # Carregar VOCs com segurança
+                voc_data = []
+                if existing_charter and 'voc_data' in existing_charter:
+                    voc_data = existing_charter.get('voc_data', [])
+                    if not isinstance(voc_data, list):
+                        voc_data = []
                 
                 voc_data.append(new_voc)
                 
                 try:
-                    supabase.table('project_charter').update({
-                        'voc_data': voc_data
-                    }).eq('project_id', st.session_state.current_project_id).execute()
+                    if existing_charter:
+                        supabase.table('project_charter').update({
+                            'voc_data': voc_data
+                        }).eq('project_id', st.session_state.current_project_id).execute()
+                    else:
+                        supabase.table('project_charter').insert({
+                            'project_id': st.session_state.current_project_id,
+                            'voc_data': voc_data
+                        }).execute()
                     
                     st.success("✅ VOC adicionado!")
                     st.rerun()
@@ -666,7 +755,11 @@ with tab5:
                     st.error(f"Erro: {e}")
         
         # Listar VOCs
-        voc_data = existing_charter.get('voc_data', []) if existing_charter else []
+        voc_data = []
+        if existing_charter and 'voc_data' in existing_charter:
+            voc_data = existing_charter.get('voc_data', [])
+            if not isinstance(voc_data, list):
+                voc_data = []
         
         if voc_data:
             st.divider()
@@ -721,16 +814,25 @@ with tab5:
                     'related_voc': ctq_related_voc
                 }
                 
-                ctq_characteristics = existing_charter.get('ctq_characteristics', []) if existing_charter else []
-                if not isinstance(ctq_characteristics, list):
-                    ctq_characteristics = []
+                # Carregar CTQs com segurança
+                ctq_characteristics = []
+                if existing_charter and 'ctq_characteristics' in existing_charter:
+                    ctq_characteristics = existing_charter.get('ctq_characteristics', [])
+                    if not isinstance(ctq_characteristics, list):
+                        ctq_characteristics = []
                 
                 ctq_characteristics.append(new_ctq)
                 
                 try:
-                    supabase.table('project_charter').update({
-                        'ctq_characteristics': ctq_characteristics
-                    }).eq('project_id', st.session_state.current_project_id).execute()
+                    if existing_charter:
+                        supabase.table('project_charter').update({
+                            'ctq_characteristics': ctq_characteristics
+                        }).eq('project_id', st.session_state.current_project_id).execute()
+                    else:
+                        supabase.table('project_charter').insert({
+                            'project_id': st.session_state.current_project_id,
+                            'ctq_characteristics': ctq_characteristics
+                        }).execute()
                     
                     st.success("✅ CTQ adicionado!")
                     st.rerun()
@@ -739,7 +841,11 @@ with tab5:
                     st.error(f"Erro: {e}")
         
         # Listar CTQs
-        ctq_characteristics = existing_charter.get('ctq_characteristics', []) if existing_charter else []
+        ctq_characteristics = []
+        if existing_charter and 'ctq_characteristics' in existing_charter:
+            ctq_characteristics = existing_charter.get('ctq_characteristics', [])
+            if not isinstance(ctq_characteristics, list):
+                ctq_characteristics = []
         
         if ctq_characteristics:
             st.divider()
@@ -813,16 +919,25 @@ with tab6:
                     'owner': risk_owner
                 }
                 
-                risks = existing_charter.get('risks', []) if existing_charter else []
-                if not isinstance(risks, list):
-                    risks = []
+                # Carregar riscos com segurança
+                risks = []
+                if existing_charter and 'risks' in existing_charter:
+                    risks = existing_charter.get('risks', [])
+                    if not isinstance(risks, list):
+                        risks = []
                 
                 risks.append(new_risk)
                 
                 try:
-                    supabase.table('project_charter').update({
-                        'risks': risks
-                    }).eq('project_id', st.session_state.current_project_id).execute()
+                    if existing_charter:
+                        supabase.table('project_charter').update({
+                            'risks': risks
+                        }).eq('project_id', st.session_state.current_project_id).execute()
+                    else:
+                        supabase.table('project_charter').insert({
+                            'project_id': st.session_state.current_project_id,
+                            'risks': risks
+                        }).execute()
                     
                     st.success("✅ Risco adicionado!")
                     st.rerun()
@@ -833,7 +948,12 @@ with tab6:
     with col2:
         st.subheader("Matriz de Riscos")
         
-        risks = existing_charter.get('risks', []) if existing_charter else []
+        # Carregar riscos com segurança
+        risks = []
+        if existing_charter and 'risks' in existing_charter:
+            risks = existing_charter.get('risks', [])
+            if not isinstance(risks, list):
+                risks = []
         
         if risks:
             # Criar matriz de riscos
@@ -863,19 +983,31 @@ with tab6:
                     text=[f"R{i+1}"],
                     textposition="middle center",
                     marker=dict(size=30, color=color),
-                    hovertext=risk['risk'][:50]
+                    hovertext=risk['risk'][:50] if len(risk['risk']) > 50 else risk['risk']
                 ))
             
             # Adicionar zonas de risco
-            fig.add_shape(type="rect", x0=0, y0=0, x1=2, y1=2, fillcolor="lightgreen", opacity=0.2)
-            fig.add_shape(type="rect", x0=2, y0=0, x1=4, y1=2, fillcolor="yellow", opacity=0.2)
-            fig.add_shape(type="rect", x0=4, y0=0, x1=6, y1=2, fillcolor="orange", opacity=0.2)
-            fig.add_shape(type="rect", x0=0, y0=2, x1=2, y1=4, fillcolor="yellow", opacity=0.2)
-            fig.add_shape(type="rect", x0=2, y0=2, x1=4, y1=4, fillcolor="orange", opacity=0.2)
-            fig.add_shape(type="rect", x0=4, y0=2, x1=6, y1=4, fillcolor="red", opacity=0.2)
-            fig.add_shape(type="rect", x0=0, y0=4, x1=2, y1=6, fillcolor="orange", opacity=0.2)
-            fig.add_shape(type="rect", x0=2, y0=4, x1=4, y1=6, fillcolor="red", opacity=0.2)
-            fig.add_shape(type="rect", x0=4, y0=4, x1=6, y1=6, fillcolor="darkred", opacity=0.2)
+            for x in range(6):
+                for y in range(6):
+                    score = x * y
+                    if score <= 6:
+                        color = "lightgreen"
+                    elif score <= 12:
+                        color = "yellow"
+                    elif score <= 20:
+                        color = "orange"
+                    else:
+                        color = "red"
+                    
+                    if x > 0 and y > 0:
+                        fig.add_shape(
+                            type="rect",
+                            x0=x-0.5, y0=y-0.5,
+                            x1=x+0.5, y1=y+0.5,
+                            fillcolor=color,
+                            opacity=0.2,
+                            line=dict(width=0)
+                        )
             
             fig.update_layout(
                 title="Matriz de Riscos (Probabilidade x Impacto)",
@@ -935,15 +1067,21 @@ if existing_charter:
         st.progress(completeness / 100)
     
     with col2:
-        stakeholder_count = len(existing_charter.get('stakeholders', []))
+        stakeholder_count = 0
+        if 'stakeholders' in existing_charter and isinstance(existing_charter['stakeholders'], list):
+            stakeholder_count = len(existing_charter['stakeholders'])
         st.metric("Stakeholders", stakeholder_count)
     
     with col3:
-        risk_count = len(existing_charter.get('risks', []))
+        risk_count = 0
+        if 'risks' in existing_charter and isinstance(existing_charter['risks'], list):
+            risk_count = len(existing_charter['risks'])
         st.metric("Riscos Identificados", risk_count)
     
     with col4:
-        voc_count = len(existing_charter.get('voc_data', []))
+        voc_count = 0
+        if 'voc_data' in existing_charter and isinstance(existing_charter['voc_data'], list):
+            voc_count = len(existing_charter['voc_data'])
         st.metric("VOCs Coletados", voc_count)
     
     # Atualizar fase do projeto se Define estiver completo
