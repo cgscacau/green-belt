@@ -3,6 +3,17 @@ from datetime import datetime
 import json
 import pandas as pd
 import streamlit as st
+import sys
+
+# Adiciona o diretório app ao path
+current_dir = Path(__file__).parent
+parent_dir = current_dir.parent
+if str(parent_dir) not in sys.path:
+    sys.path.insert(0, str(parent_dir))
+
+# Define RESULTS aqui mesmo para evitar import circular
+RESULTS = parent_dir / "data_container" / "results"
+RESULTS.mkdir(parents=True, exist_ok=True)
 
 # Alternativa ao WeasyPrint para Streamlit Cloud
 try:
@@ -158,52 +169,56 @@ def render_html_report(
     out_pdf: Path = None
 ):
     """Gera relatório HTML e opcionalmente PDF"""
-    from jinja2 import Template
-    
-    # Prepara dados
-    tmpl = Template(TEMPLATE_HTML)
-    
-    # Converte DataFrames para HTML
-    if tables:
-        for t in tables:
-            if 'df' in t:
-                t['html'] = t['df'].to_html(index=False, classes='table')
-    
-    # Renderiza
-    html = tmpl.render(
-        title=title,
-        project=project,
-        summary=summary,
-        author=author,
-        org=org,
-        date=datetime.now().strftime("%Y-%m-%d"),
-        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        metrics=metrics,
-        tables=tables,
-        conclusions=conclusions,
-        recommendations=recommendations
-    )
-    
-    # Salva HTML
-    if out_html:
-        out_html.write_text(html, encoding="utf-8")
-        st.success(f"Relatório HTML salvo: {out_html.name}")
-    
-    # Gera PDF se possível
-    if out_pdf and USE_REPORTLAB:
-        generate_pdf_report(
+    try:
+        from jinja2 import Template
+        
+        # Prepara dados
+        tmpl = Template(TEMPLATE_HTML)
+        
+        # Converte DataFrames para HTML
+        if tables:
+            for t in tables:
+                if 'df' in t and hasattr(t['df'], 'to_html'):
+                    t['html'] = t['df'].to_html(index=False, classes='table')
+        
+        # Renderiza
+        html = tmpl.render(
             title=title,
             project=project,
             summary=summary,
             author=author,
+            org=org,
+            date=datetime.now().strftime("%Y-%m-%d"),
+            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             metrics=metrics,
             tables=tables,
             conclusions=conclusions,
-            recommendations=recommendations,
-            out_pdf=out_pdf
+            recommendations=recommendations
         )
-    
-    return html
+        
+        # Salva HTML
+        if out_html:
+            out_html.write_text(html, encoding="utf-8")
+            st.success(f"Relatório HTML salvo: {out_html.name}")
+        
+        # Gera PDF se possível
+        if out_pdf and USE_REPORTLAB:
+            generate_pdf_report(
+                title=title,
+                project=project,
+                summary=summary,
+                author=author,
+                metrics=metrics,
+                tables=tables,
+                conclusions=conclusions,
+                recommendations=recommendations,
+                out_pdf=out_pdf
+            )
+        
+        return html
+    except Exception as e:
+        st.error(f"Erro ao gerar relatório: {e}")
+        return None
 
 def generate_pdf_report(
     title,
@@ -310,21 +325,23 @@ def generate_pdf_report(
 
 def save_analysis_manifest(phase, dataset_id, parameters, results, run_id=None):
     """Salva manifesto de análise para rastreabilidade"""
-    from app.components.upload_and_store import RESULTS
-    
-    if not run_id:
-        run_id = f"{phase}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    manifest = {
-        "run_id": run_id,
-        "phase": phase,
-        "dataset_id": dataset_id,
-        "timestamp": datetime.now().isoformat(),
-        "parameters": parameters,
-        "results": results
-    }
-    
-    manifest_path = RESULTS / f"manifest_{run_id}.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2))
-    
-    return run_id, manifest_path
+    try:
+        if not run_id:
+            run_id = f"{phase}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        manifest = {
+            "run_id": run_id,
+            "phase": phase,
+            "dataset_id": dataset_id,
+            "timestamp": datetime.now().isoformat(),
+            "parameters": parameters,
+            "results": results
+        }
+        
+        manifest_path = RESULTS / f"manifest_{run_id}.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+        
+        return run_id, manifest_path
+    except Exception as e:
+        st.error(f"Erro ao salvar manifesto: {e}")
+        return None, None
