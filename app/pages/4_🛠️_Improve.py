@@ -7,6 +7,8 @@ from datetime import datetime
 import io
 import json
 from scipy import stats
+from supabase import create_client, Client
+import os
 
 # Configuração da página
 st.set_page_config(
@@ -15,89 +17,102 @@ st.set_page_config(
     layout="wide"
 )
 
-# Função para converter tipos numpy para Python nativos
-def convert_to_native_types(obj):
-    """Converte tipos numpy/pandas para tipos Python nativos"""
-    if isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, pd.Series):
-        return obj.tolist()
-    elif isinstance(obj, pd.DataFrame):
-        return obj.to_dict('records')
-    elif isinstance(obj, dict):
-        return {key: convert_to_native_types(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_native_types(item) for item in item]
-    return obj
+# Configuração do Supabase
+@st.cache_resource
+def init_supabase():
+    url = os.environ.get("SUPABASE_URL", st.secrets.get("SUPABASE_URL", ""))
+    key = os.environ.get("SUPABASE_KEY", st.secrets.get("SUPABASE_KEY", ""))
+    if url and key:
+        return create_client(url, key)
+    return None
 
-# Função para carregar dados existentes
-@st.cache_data
-def load_existing_data():
-    """Carrega dados do projeto já existentes no sistema"""
-    # Tentar carregar dados do session_state global ou de outras páginas
-    if 'df' in st.session_state:
+supabase = init_supabase()
+
+# Função para carregar dados do projeto do Supabase
+@st.cache_data(ttl=300)
+def load_project_data():
+    """Carrega os dados do projeto do Supabase"""
+    if supabase:
+        try:
+            # Carregar dados principais do projeto
+            response = supabase.table('project_data').select("*").execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                # Converter colunas numéricas
+                numeric_columns = ['horas_operacao', 'tempo_parada_min', 'custo', 'quantidade', 'defeitos']
+                for col in numeric_columns:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                return df
+        except Exception as e:
+            st.error(f"Erro ao carregar dados: {e}")
+    
+    # Se não houver dados no Supabase, verificar session_state
+    if 'project_df' in st.session_state:
+        return st.session_state.project_df
+    elif 'df' in st.session_state:
         return st.session_state.df
-    elif 'data' in st.session_state:
-        return st.session_state.data
-    else:
-        # Criar dados de exemplo baseados no contexto do projeto
-        np.random.seed(42)
-        n_records = 121  # Número de registros mostrado na imagem
-        
-        data = {
-            'id': range(1, n_records + 1),
-            'data': pd.date_range(start='2024-01-01', periods=n_records, freq='D'),
-            'unidade': np.random.choice(['Unidade A', 'Unidade B', 'Unidade C'], n_records),
-            'categoria': np.random.choice(['Material', 'Mão de Obra', 'Método'], n_records, 
-                                        p=[0.5, 0.3, 0.2]),
-            'defeito': np.random.choice([
-                'Combustível com alto teor de água',
-                'Falta de treinamento',
-                'Processo de abastecimento inadequado',
-                'Checklist incompleto',
-                'Filtro saturado',
-                'Tanque com contaminação',
-                'Drenagem não realizada'
-            ], n_records, p=[0.3, 0.2, 0.15, 0.1, 0.1, 0.1, 0.05]),
-            'horas_operacao': np.random.normal(67.97, 4.59, n_records),
-            'tempo_parada_min': np.random.exponential(30, n_records),
-            'custo': np.random.exponential(100, n_records),
-            'quantidade': np.random.poisson(5, n_records),
-            'defeitos': np.random.poisson(3, n_records),
-            'turno': np.random.choice(['Manhã', 'Tarde', 'Noite'], n_records),
-            'linha': np.random.choice(['Linha 1', 'Linha 2', 'Linha 3'], n_records)
-        }
-        
-        df = pd.DataFrame(data)
-        df['horas_operacao'] = df['horas_operacao'].clip(lower=0)
-        df['tempo_parada_min'] = df['tempo_parada_min'].clip(lower=0, upper=480)
-        
-        return df
+    
+    return pd.DataFrame()
+
+# Função para carregar análises da página Analyze
+@st.cache_data(ttl=300)
+def load_analyze_results():
+    """Carrega resultados das análises já realizadas na página Analyze"""
+    if supabase:
+        try:
+            response = supabase.table('analyze_results').select("*").order('created_at', desc=True).execute()
+            if response.data:
+                return response.data
+        except:
+            pass
+    
+    # Verificar session_state para análises
+    if 'analyze_results' in st.session_state:
+        return st.session_state.analyze_results
+    
+    return []
+
+# Função para salvar plano de ação no Supabase
+def save_action_plan(action_data):
+    """Salva plano de ação no Supabase"""
+    if supabase:
+        try:
+            response = supabase.table('action_plans').insert(action_data).execute()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao salvar plano de ação: {e}")
+    return False
+
+# Função para carregar planos de ação salvos
+@st.cache_data(ttl=300)
+def load_action_plans():
+    """Carrega planos de ação do Supabase"""
+    if supabase:
+        try:
+            response = supabase.table('action_plans').select("*").order('created_at', desc=True).execute()
+            if response.data:
+                return response.data
+        except:
+            pass
+    return []
+
+# Carregar dados do projeto
+df_projeto = load_project_data()
+analyze_results = load_analyze_results()
 
 # Inicializar session state
-if 'improve_df' not in st.session_state:
-    st.session_state.improve_df = load_existing_data()
-if 'improve_analyses' not in st.session_state:
-    st.session_state.improve_analyses = []
 if 'improvement_actions' not in st.session_state:
-    st.session_state.improvement_actions = []
-
-# Calcular métricas atuais baseadas nos dados
-if not st.session_state.improve_df.empty:
-    df_metrics = st.session_state.improve_df
-    current_defect_rate = (df_metrics['defeitos'].sum() / len(df_metrics) * 100) if 'defeitos' in df_metrics.columns else 5.0
-    current_cycle_time = df_metrics['tempo_parada_min'].mean() if 'tempo_parada_min' in df_metrics.columns else 15
-    current_cost = df_metrics['custo'].mean() if 'custo' in df_metrics.columns else 25.0
-    current_productivity = len(df_metrics) / df_metrics['horas_operacao'].sum() * 60 if 'horas_operacao' in df_metrics.columns else 50
-else:
-    current_defect_rate = 5.0
-    current_cycle_time = 15
-    current_cost = 25.0
-    current_productivity = 50
+    st.session_state.improvement_actions = load_action_plans()
+if 'ishikawa_causes' not in st.session_state:
+    st.session_state.ishikawa_causes = {
+        "Método": [],
+        "Máquina": [],
+        "Mão de Obra": [],
+        "Material": [],
+        "Medida": [],
+        "Meio Ambiente": []
+    }
 
 # Título e descrição
 st.title("🛠️ Improve - Implementação de Melhorias")
@@ -106,16 +121,33 @@ Esta fase foca na implementação de soluções para os problemas identificados.
 Vamos desenvolver, testar e implementar melhorias no processo.
 """)
 
+# Verificar se há dados carregados
+if df_projeto.empty:
+    st.warning("⚠️ Nenhum dado do projeto foi encontrado. Por favor, complete as fases anteriores primeiro.")
+    st.stop()
+
+# Mostrar estatísticas do projeto
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Registros", len(df_projeto))
+with col2:
+    st.metric("Variáveis", len(df_projeto.columns))
+with col3:
+    if 'defeitos' in df_projeto.columns:
+        st.metric("Total Defeitos", df_projeto['defeitos'].sum())
+with col4:
+    if 'custo' in df_projeto.columns:
+        st.metric("Custo Médio", f"R$ {df_projeto['custo'].mean():.2f}")
+
 # Tabs principais
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Análise de Causas",
-    "🎯 Pareto",
     "📋 Plano de Ação",
     "🔬 Simulação",
-    "💾 Análises Salvas"
+    "📈 Resultados da Análise"
 ])
 
-# Tab 1: Análise de Causas
+# Tab 1: Análise de Causas (Ishikawa)
 with tab1:
     st.header("Análise de Causas Raiz")
     
@@ -123,326 +155,107 @@ with tab1:
     
     with col1:
         st.subheader("Diagrama de Ishikawa (Espinha de Peixe)")
-        
-        # Categorias do Ishikawa
-        categorias = {
-            "Método": [],
-            "Máquina": [],
-            "Mão de Obra": [],
-            "Material": [],
-            "Medida": [],
-            "Meio Ambiente": []
-        }
+        st.info("Adicione as causas identificadas na fase Analyze para cada categoria")
         
         # Input para causas
-        st.write("Adicione causas para cada categoria:")
-        
-        for categoria in categorias:
+        for categoria in st.session_state.ishikawa_causes:
             with st.expander(f"📌 {categoria}"):
-                num_causas = st.number_input(
-                    f"Número de causas para {categoria}",
-                    min_value=0,
-                    max_value=5,
-                    value=1,
-                    key=f"num_{categoria}"
+                # Campo para adicionar nova causa
+                nova_causa = st.text_input(
+                    f"Adicionar causa em {categoria}",
+                    key=f"nova_causa_{categoria}"
                 )
+                if st.button(f"Adicionar", key=f"add_{categoria}"):
+                    if nova_causa and nova_causa not in st.session_state.ishikawa_causes[categoria]:
+                        st.session_state.ishikawa_causes[categoria].append(nova_causa)
+                        st.success(f"Causa adicionada em {categoria}")
+                        st.rerun()
                 
-                for i in range(int(num_causas)):
-                    causa = st.text_input(
-                        f"Causa {i+1}",
-                        key=f"causa_{categoria}_{i}"
-                    )
-                    if causa:
-                        if causa not in categorias[categoria]:
-                            categorias[categoria].append(causa)
+                # Listar causas existentes
+                if st.session_state.ishikawa_causes[categoria]:
+                    st.write("**Causas cadastradas:**")
+                    for i, causa in enumerate(st.session_state.ishikawa_causes[categoria]):
+                        col_causa, col_remove = st.columns([4, 1])
+                        with col_causa:
+                            st.write(f"{i+1}. {causa}")
+                        with col_remove:
+                            if st.button("🗑️", key=f"del_{categoria}_{i}"):
+                                st.session_state.ishikawa_causes[categoria].pop(i)
+                                st.rerun()
     
     with col2:
         st.subheader("Priorização de Causas")
         
-        # Top 3 causas prioritárias (baseadas nos dados mostrados na imagem)
-        st.subheader("🏆 Top 3 Causas Prioritárias")
+        # Coletar todas as causas para priorização
+        todas_causas = []
+        for cat, causas_list in st.session_state.ishikawa_causes.items():
+            for causa in causas_list:
+                todas_causas.append({
+                    "Categoria": cat,
+                    "Causa": causa,
+                    "Impacto": 5,
+                    "Facilidade": 5,
+                    "Custo": 5
+                })
         
-        causas_prioritarias = [
-            {
-                "posicao": "#1",
-                "causa": "Combustível com alto teor de água e contaminação biológica (bactérias/fungos).",
-                "categoria": "Material",
-                "score": 80,
-                "prioridade": "Alta Prioridade"
-            },
-            {
-                "posicao": "#2",
-                "causa": "Falta de treinamento específico para inspeção e drenagem diária dos tanques de combustível.",
-                "categoria": "Mão de Obra",
-                "score": 72,
-                "prioridade": "Alta Prioridade"
-            },
-            {
-                "posicao": "#3",
-                "causa": "Processo de abastecimento e armazenamento do diesel não padronizado (ausência de checklist e rotina de filtragem).",
-                "categoria": "Método",
-                "score": 72,
-                "prioridade": "Alta Prioridade"
-            }
-        ]
-        
-        for causa in causas_prioritarias:
-            with st.container():
-                st.write(f"**Posição**")
-                st.write(f"## {causa['posicao']}")
-                st.write(causa['causa'])
-                st.write(f"*Categoria: {causa['categoria']}*")
-                col_score, col_prio = st.columns(2)
-                with col_score:
-                    st.metric("Score", causa['score'])
-                with col_prio:
-                    if causa['prioridade'] == "Alta Prioridade":
-                        st.success(f"✅ {causa['prioridade']}")
-                st.markdown("---")
-
-# Tab 2: Análise de Pareto
-with tab2:
-    st.header("Análise de Pareto")
-    
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("Configuração")
-        
-        # Usar dados carregados
-        if not st.session_state.improve_df.empty:
-            st.success(f"✅ {len(st.session_state.improve_df)} registros carregados")
+        if todas_causas:
+            st.write("Avalie cada causa (1-10):")
             
-            # Seleção de colunas
-            cat_columns = st.session_state.improve_df.select_dtypes(include=['object']).columns.tolist()
-            num_columns = st.session_state.improve_df.select_dtypes(include=[np.number]).columns.tolist()
+            # Editor de dados para priorização
+            df_causas = pd.DataFrame(todas_causas)
             
-            cat_col = st.selectbox(
-                "Categoria (eixo X)",
-                options=cat_columns,
-                index=cat_columns.index('defeito') if 'defeito' in cat_columns else 0,
-                key="pareto_cat"
+            df_editado = st.data_editor(
+                df_causas,
+                column_config={
+                    "Impacto": st.column_config.NumberColumn(
+                        "Impacto (1-10)",
+                        min_value=1,
+                        max_value=10,
+                        default=5
+                    ),
+                    "Facilidade": st.column_config.NumberColumn(
+                        "Facilidade (1-10)",
+                        min_value=1,
+                        max_value=10,
+                        default=5
+                    ),
+                    "Custo": st.column_config.NumberColumn(
+                        "Custo (1-10)",
+                        min_value=1,
+                        max_value=10,
+                        default=5
+                    )
+                },
+                hide_index=True,
+                key="causas_editor"
             )
             
-            val_col = st.selectbox(
-                "Valor (eixo Y)",
-                options=num_columns,
-                index=num_columns.index('tempo_parada_min') if 'tempo_parada_min' in num_columns else 0,
-                key="pareto_val"
-            )
+            # Calcular score
+            df_editado["Score"] = (
+                df_editado["Impacto"] * 0.5 +
+                df_editado["Facilidade"] * 0.3 +
+                (11 - df_editado["Custo"]) * 0.2
+            ) * 10
+            
+            # Ordenar por score
+            df_editado = df_editado.sort_values("Score", ascending=False)
+            
+            # Mostrar top 3
+            if len(df_editado) > 0:
+                st.subheader("🏆 Top 3 Causas Prioritárias")
+                for idx, row in df_editado.head(3).iterrows():
+                    st.write(f"**#{idx+1}**")
+                    st.write(f"{row['Causa']}")
+                    st.write(f"*Categoria: {row['Categoria']}*")
+                    st.metric("Score", f"{row['Score']:.0f}")
+                    if row['Score'] >= 70:
+                        st.success("✅ Alta Prioridade")
+                    st.markdown("---")
         else:
-            st.warning("Nenhum dado carregado")
-            
-            # Upload de dados
-            uploaded_file = st.file_uploader(
-                "Upload de dados (CSV/Excel)",
-                type=['csv', 'xlsx'],
-                key="pareto_upload"
-            )
-            
-            if uploaded_file:
-                try:
-                    if uploaded_file.name.endswith('.csv'):
-                        st.session_state.improve_df = pd.read_csv(uploaded_file)
-                    else:
-                        st.session_state.improve_df = pd.read_excel(uploaded_file)
-                    st.success("✅ Dados carregados com sucesso!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erro ao carregar arquivo: {e}")
-    
-    with col2:
-        if not st.session_state.improve_df.empty and 'cat_col' in locals() and 'val_col' in locals():
-            st.subheader("Pareto de Defeitos/Problemas")
-            
-            # Mostrar campos selecionados
-            st.write(f"**Categoria (eixo X):** {cat_col}")
-            st.write(f"**Valor (eixo Y):** {val_col}")
-            
-            def create_pareto_chart(df, category_col, value_col):
-                """Cria gráfico de Pareto com tipos nativos"""
-                try:
-                    # Validar e limpar dados
-                    df = df.copy()
-                    df = df[df[value_col].notna()]
-                    df = df[~df[value_col].isin([np.inf, -np.inf])]
-                    df[value_col] = pd.to_numeric(df[value_col], errors='coerce')
-                    df = df.dropna(subset=[value_col])
-                    
-                    # Agregar dados
-                    pareto_data = df.groupby(category_col)[value_col].sum().sort_values(ascending=False).head(10)
-                    
-                    # Converter para tipos nativos imediatamente
-                    categories = list(pareto_data.index)
-                    values = [float(v) for v in pareto_data.values]
-                    
-                    # Calcular percentual acumulado
-                    total = sum(values)
-                    cumsum = []
-                    cumulative = 0
-                    for v in values:
-                        cumulative += v
-                        cumsum.append(cumulative)
-                    
-                    cumperc = [100.0 * c / total for c in cumsum]
-                    
-                    # Criar figura
-                    fig = go.Figure()
-                    
-                    # Adicionar barras
-                    fig.add_trace(go.Bar(
-                        x=categories,
-                        y=values,
-                        name='Frequência',
-                        marker_color='lightblue',
-                        yaxis='y',
-                        text=[f'{v:.0f}' for v in values],
-                        textposition='auto'
-                    ))
-                    
-                    # Adicionar linha de percentual acumulado
-                    fig.add_trace(go.Scatter(
-                        x=categories,
-                        y=cumperc,
-                        name='% Acumulado',
-                        marker_color='red',
-                        yaxis='y2',
-                        mode='lines+markers',
-                        line=dict(width=2),
-                        text=[f'{p:.1f}%' for p in cumperc],
-                        textposition='top center'
-                    ))
-                    
-                    # Adicionar linha de referência em 80%
-                    fig.add_hline(
-                        y=80,
-                        line_dash="dash",
-                        line_color="green",
-                        line_width=2,
-                        yref='y2',
-                        annotation_text="80%",
-                        annotation_position="right"
-                    )
-                    
-                    # Configurar layout
-                    fig.update_layout(
-                        title=f'Análise de Pareto - {category_col} vs {value_col}',
-                        xaxis=dict(
-                            title=category_col,
-                            tickangle=45
-                        ),
-                        yaxis=dict(
-                            title=value_col,
-                            side='left'
-                        ),
-                        yaxis2=dict(
-                            title='% Acumulado',
-                            overlaying='y',
-                            side='right',
-                            range=[0, 105],
-                            tickformat='.0f',
-                            ticksuffix='%'
-                        ),
-                        hovermode='x unified',
-                        height=500,
-                        showlegend=True,
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="right",
-                            x=1
-                        )
-                    )
-                    
-                    # Retornar dados convertidos
-                    pareto_dict = {
-                        'categories': categories,
-                        'values': values,
-                        'cumulative_percent': cumperc
-                    }
-                    
-                    return fig, pareto_dict
-                    
-                except Exception as e:
-                    st.error(f"Erro ao criar gráfico: {e}")
-                    return None, None
-            
-            # Gerar Pareto
-            if st.button("📊 Gerar Pareto", key="gen_pareto"):
-                fig, pareto_data = create_pareto_chart(
-                    st.session_state.improve_df,
-                    cat_col,
-                    val_col
-                )
-                
-                if fig and pareto_data:
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Insights do Pareto
-                    st.info("📊 **Insights do Pareto:**")
-                    
-                    # Encontrar ponto 80/20
-                    items_80 = 0
-                    for i, perc in enumerate(pareto_data['cumulative_percent']):
-                        if perc >= 80:
-                            items_80 = i + 1
-                            break
-                    
-                    total_items = len(pareto_data['categories'])
-                    perc_items = (items_80 / total_items) * 100
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric(
-                            "Items para 80%",
-                            f"{items_80} de {total_items}",
-                            f"{perc_items:.1f}% dos items"
-                        )
-                    with col2:
-                        st.metric(
-                            "Top Categoria",
-                            pareto_data['categories'][0] if pareto_data['categories'] else "N/A",
-                            f"{pareto_data['cumulative_percent'][0]:.1f}% do total" if pareto_data['cumulative_percent'] else "N/A"
-                        )
-                    with col3:
-                        total_value = sum(pareto_data['values'])
-                        st.metric(
-                            "Total Analisado",
-                            f"{total_value:.0f}",
-                            f"{len(st.session_state.improve_df)} registros"
-                        )
-                    
-                    # Salvar análise
-                    if st.button("💾 Salvar Análise", key="save_pareto"):
-                        try:
-                            output = io.StringIO()
-                            fig.write_html(output)
-                            
-                            analysis_data = {
-                                'type': 'pareto',
-                                'timestamp': datetime.now().isoformat(),
-                                'category': cat_col,
-                                'value': val_col,
-                                'data': pareto_data,
-                                'insights': {
-                                    'items_for_80': int(items_80),
-                                    'total_items': int(total_items),
-                                    'percent_items': float(perc_items),
-                                    'top_category': str(pareto_data['categories'][0]) if pareto_data['categories'] else "N/A",
-                                    'top_percent': float(pareto_data['cumulative_percent'][0]) if pareto_data['cumulative_percent'] else 0
-                                },
-                                'figure_html': output.getvalue()
-                            }
-                            
-                            st.session_state.improve_analyses.append(analysis_data)
-                            st.success("✅ Análise salva com sucesso!")
-                            
-                        except Exception as e:
-                            st.error(f"Erro ao salvar: {e}")
+            st.info("Adicione causas no diagrama de Ishikawa para realizar a priorização")
 
-# Tab 3: Plano de Ação
-with tab3:
+# Tab 2: Plano de Ação
+with tab2:
     st.header("Plano de Ação 5W2H")
     
     st.markdown("""
@@ -477,7 +290,6 @@ with tab3:
             
             if submitted and what and why:
                 action = {
-                    'id': len(st.session_state.improvement_actions) + 1,
                     'what': what,
                     'why': why,
                     'where': where,
@@ -490,9 +302,14 @@ with tab3:
                     'created_at': datetime.now().isoformat()
                 }
                 
-                st.session_state.improvement_actions.append(action)
-                st.success("✅ Ação adicionada ao plano!")
-                st.rerun()
+                # Salvar no Supabase
+                if save_action_plan(action):
+                    st.session_state.improvement_actions.append(action)
+                    st.success("✅ Ação adicionada e salva no banco de dados!")
+                    st.rerun()
+                else:
+                    st.session_state.improvement_actions.append(action)
+                    st.warning("Ação adicionada localmente (não foi possível salvar no banco)")
     
     # Visualização do Plano de Ação
     if st.session_state.improvement_actions:
@@ -504,107 +321,66 @@ with tab3:
         # Estatísticas
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            total_actions = len(df_actions)
-            st.metric("Total de Ações", total_actions)
+            st.metric("Total de Ações", len(df_actions))
         with col2:
             pending = len(df_actions[df_actions['status'] == 'Pendente'])
             st.metric("Pendentes", pending)
         with col3:
-            total_cost = df_actions['how_much'].sum()
-            st.metric("Custo Total", f"R$ {total_cost:,.2f}")
+            if 'how_much' in df_actions.columns:
+                total_cost = df_actions['how_much'].sum()
+                st.metric("Custo Total", f"R$ {total_cost:,.2f}")
         with col4:
             high_priority = len(df_actions[df_actions['priority'] == 'Alta'])
             st.metric("Alta Prioridade", high_priority)
         
         # Tabela de ações
+        display_cols = ['what', 'who', 'when', 'priority', 'status']
+        if 'how_much' in df_actions.columns:
+            display_cols.append('how_much')
+        
         st.dataframe(
-            df_actions[['id', 'what', 'who', 'when', 'priority', 'status', 'how_much']],
+            df_actions[display_cols],
             use_container_width=True,
             hide_index=True
         )
-        
-        # Gráfico de Gantt
-        if len(df_actions) > 0:
-            st.subheader("📊 Cronograma (Gantt)")
-            
-            # Preparar dados para Gantt
-            df_gantt = df_actions.copy()
-            df_gantt['start'] = pd.to_datetime(df_gantt['when'])
-            df_gantt['end'] = df_gantt['start'] + pd.Timedelta(days=7)
-            
-            fig_gantt = px.timeline(
-                df_gantt,
-                x_start='start',
-                x_end='end',
-                y='what',
-                color='priority',
-                title='Cronograma de Implementação',
-                color_discrete_map={
-                    'Alta': 'red',
-                    'Média': 'yellow',
-                    'Baixa': 'green'
-                }
-            )
-            
-            fig_gantt.update_yaxes(autorange="reversed")
-            st.plotly_chart(fig_gantt, use_container_width=True)
 
-# Tab 4: Simulação
-with tab4:
+# Tab 3: Simulação baseada em dados reais
+with tab3:
     st.header("Simulação de Melhorias")
+    st.markdown("Simule o impacto das melhorias propostas nos indicadores do processo.")
     
-    st.markdown("""
-    Simule o impacto das melhorias propostas nos indicadores do processo.
-    """)
-    
+    # Calcular métricas atuais dos dados reais do projeto
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("Parâmetros Atuais 📊")
-        st.info("Valores baseados nos dados carregados do sistema")
+        st.info("Valores calculados dos dados reais do projeto")
         
-        # Mostrar valores calculados dos dados reais
-        st.write(f"**Taxa de Defeitos Atual:** {current_defect_rate:.2f}%")
-        defect_slider_current = st.slider(
-            "Ajustar Taxa de Defeitos Atual (%)",
-            min_value=0.0,
-            max_value=20.0,
-            value=float(current_defect_rate),
-            step=0.1,
-            key="current_defect",
-            disabled=True
-        )
+        # Calcular métricas dos dados
+        if 'defeitos' in df_projeto.columns:
+            current_defect_rate = (df_projeto['defeitos'].sum() / len(df_projeto)) * 100
+        else:
+            current_defect_rate = 5.0
+            
+        if 'tempo_parada_min' in df_projeto.columns:
+            current_cycle_time = df_projeto['tempo_parada_min'].mean()
+        else:
+            current_cycle_time = 15.0
+            
+        if 'custo' in df_projeto.columns:
+            current_cost = df_projeto['custo'].mean()
+        else:
+            current_cost = 25.0
+            
+        if 'horas_operacao' in df_projeto.columns:
+            current_productivity = len(df_projeto) / df_projeto['horas_operacao'].sum() * 60
+        else:
+            current_productivity = 50.0
         
-        st.write(f"**Tempo de Ciclo Atual:** {current_cycle_time:.2f} min")
-        cycle_slider_current = st.slider(
-            "Ajustar Tempo de Ciclo Atual (min)",
-            min_value=1,
-            max_value=60,
-            value=int(current_cycle_time),
-            key="current_cycle",
-            disabled=True
-        )
-        
-        st.write(f"**Custo por Unidade Atual:** R$ {current_cost:.2f}")
-        cost_slider_current = st.slider(
-            "Ajustar Custo por Unidade Atual (R$)",
-            min_value=1.0,
-            max_value=100.0,
-            value=float(current_cost),
-            step=0.5,
-            key="current_cost",
-            disabled=True
-        )
-        
-        st.write(f"**Produtividade Atual:** {current_productivity:.2f} un/hora")
-        prod_slider_current = st.slider(
-            "Ajustar Produtividade Atual (un/hora)",
-            min_value=10,
-            max_value=200,
-            value=int(current_productivity),
-            key="current_prod",
-            disabled=True
-        )
+        st.metric("Taxa de Defeitos Atual", f"{current_defect_rate:.2f}%")
+        st.metric("Tempo de Ciclo Atual", f"{current_cycle_time:.2f} min")
+        st.metric("Custo por Unidade Atual", f"R$ {current_cost:.2f}")
+        st.metric("Produtividade Atual", f"{current_productivity:.2f} un/hora")
     
     with col2:
         st.subheader("Parâmetros Esperados (Após Melhorias)")
@@ -612,38 +388,36 @@ with tab4:
         expected_defect_rate = st.slider(
             "Taxa de Defeitos Esperada (%)",
             min_value=0.0,
-            max_value=20.0,
-            value=2.0,
-            step=0.1,
-            key="expected_defect"
+            max_value=current_defect_rate,
+            value=current_defect_rate * 0.4,
+            step=0.1
         )
         
         expected_cycle_time = st.slider(
             "Tempo de Ciclo Esperado (min)",
-            min_value=1,
-            max_value=60,
-            value=10,
-            key="expected_cycle"
+            min_value=1.0,
+            max_value=current_cycle_time,
+            value=current_cycle_time * 0.67,
+            step=0.5
         )
         
         expected_cost = st.slider(
             "Custo por Unidade Esperado (R$)",
             min_value=1.0,
-            max_value=100.0,
-            value=20.0,
-            step=0.5,
-            key="expected_cost"
+            max_value=current_cost,
+            value=current_cost * 0.8,
+            step=0.5
         )
         
         expected_productivity = st.slider(
             "Produtividade Esperada (un/hora)",
-            min_value=10,
-            max_value=200,
-            value=75,
-            key="expected_prod"
+            min_value=current_productivity,
+            max_value=current_productivity * 2,
+            value=current_productivity * 1.5,
+            step=1.0
         )
     
-    # Calcular impactos
+    # Análise de Impacto
     st.subheader("📊 Análise de Impacto")
     
     col1, col2, col3, col4 = st.columns(4)
@@ -680,13 +454,13 @@ with tab4:
             f"↑ +{expected_productivity - current_productivity:.0f} un/h"
         )
     
-    # Gráficos comparativos
+    # Comparação Visual
     st.subheader("Comparação Visual")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        # Gráfico de barras comparativo
+        # Gráfico de barras
         comparison_data = pd.DataFrame({
             'Indicador': ['Taxa Defeitos (%)', 'Tempo Ciclo (min)', 'Custo (R$)', 'Produtividade (un/h)'],
             'Atual': [current_defect_rate, current_cycle_time, current_cost, current_productivity],
@@ -704,10 +478,9 @@ with tab4:
         st.plotly_chart(fig_bar, use_container_width=True)
     
     with col2:
-        # Gráfico de radar
+        # Gráfico radar
         categories = ['Taxa Defeitos', 'Tempo Ciclo', 'Custo', 'Produtividade']
         
-        # Normalizar valores para escala 0-100 (invertendo onde menor é melhor)
         atual_norm = [
             100 - (current_defect_rate * 5) if current_defect_rate <= 20 else 0,
             100 - (current_cycle_time * 1.67) if current_cycle_time <= 60 else 0,
@@ -723,134 +496,60 @@ with tab4:
         ]
         
         fig_radar = go.Figure()
-        
         fig_radar.add_trace(go.Scatterpolar(
-            r=atual_norm,
-            theta=categories,
-            fill='toself',
-            name='Atual',
-            line_color='blue'
+            r=atual_norm, theta=categories, fill='toself', name='Atual'
         ))
-        
         fig_radar.add_trace(go.Scatterpolar(
-            r=esperado_norm,
-            theta=categories,
-            fill='toself',
-            name='Esperado',
-            line_color='green'
+            r=esperado_norm, theta=categories, fill='toself', name='Esperado'
         ))
-        
         fig_radar.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 100]
-                )
-            ),
-            showlegend=True,
             title="Análise Radar de Desempenho",
             height=400
         )
-        
         st.plotly_chart(fig_radar, use_container_width=True)
-    
-    # ROI Estimado
-    st.subheader("💰 Retorno sobre Investimento (ROI)")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        production_volume = st.number_input(
-            "Volume de Produção Mensal",
-            min_value=100,
-            max_value=100000,
-            value=10000,
-            step=100
-        )
-    
-    with col2:
-        investment = st.number_input(
-            "Investimento Total (R$)",
-            min_value=1000.0,
-            max_value=1000000.0,
-            value=50000.0,
-            step=1000.0
-        )
-    
-    with col3:
-        months = st.number_input(
-            "Período de Análise (meses)",
-            min_value=1,
-            max_value=36,
-            value=12
-        )
-    
-    # Calcular ROI
-    monthly_savings = production_volume * (current_cost - expected_cost)
-    total_savings = monthly_savings * months
-    roi = ((total_savings - investment) / investment) * 100 if investment > 0 else 0
-    payback = investment / monthly_savings if monthly_savings > 0 else 0
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Economia Mensal", f"R$ {monthly_savings:,.2f}")
-    with col2:
-        st.metric("Economia Total", f"R$ {total_savings:,.2f}")
-    with col3:
-        st.metric("ROI", f"{roi:.1f}%")
-    with col4:
-        st.metric("Payback", f"{payback:.1f} meses" if payback > 0 else "N/A")
 
-# Tab 5: Análises Salvas
-with tab5:
-    st.header("💾 Análises Salvas")
+# Tab 4: Resultados da Análise
+with tab4:
+    st.header("📈 Resultados da Fase Analyze")
     
-    if st.session_state.improve_analyses:
-        st.success(f"Total de análises salvas: {len(st.session_state.improve_analyses)}")
+    if analyze_results:
+        st.success(f"Encontradas {len(analyze_results)} análises realizadas")
         
-        for idx, analysis in enumerate(st.session_state.improve_analyses):
-            with st.expander(f"Análise {idx + 1} - {analysis['type']} - {analysis['timestamp'][:10]}"):
-                if analysis['type'] == 'pareto':
-                    st.write("**Tipo:** Análise de Pareto")
-                    st.write(f"**Categoria:** {analysis.get('category', 'N/A')}")
-                    st.write(f"**Valor:** {analysis.get('value', 'N/A')}")
-                    
-                    if 'insights' in analysis:
-                        st.write("**Insights:**")
-                        insights = analysis['insights']
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Items para 80%", f"{insights['items_for_80']} de {insights['total_items']}")
-                        with col2:
-                            st.metric("Top Categoria", insights['top_category'])
-                    
-                    if 'data' in analysis:
-                        st.write("**Dados:**")
-                        st.json(analysis['data'])
-                
-                # Botão para remover análise
-                if st.button(f"🗑️ Remover", key=f"remove_{idx}"):
-                    st.session_state.improve_analyses.pop(idx)
-                    st.rerun()
-        
-        # Exportar todas as análises
-        if st.button("📥 Exportar Todas as Análises"):
-            try:
-                # Converter para JSON
-                json_str = json.dumps(st.session_state.improve_analyses, indent=2, default=str)
-                
-                # Download
-                st.download_button(
-                    label="Download JSON",
-                    data=json_str,
-                    file_name=f"improve_analyses_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
-                )
-            except Exception as e:
-                st.error(f"Erro ao exportar: {e}")
+        # Mostrar resumo das análises
+        for result in analyze_results:
+            with st.expander(f"Análise: {result.get('type', 'N/A')} - {result.get('date', 'N/A')}"):
+                st.json(result)
     else:
-        st.info("Nenhuma análise salva ainda. Complete as análises nas outras abas e salve os resultados.")
+        st.info("Nenhuma análise da fase Analyze foi encontrada. Complete a fase Analyze primeiro.")
+    
+    # Mostrar gráficos e resultados importantes da fase Analyze
+    if not df_projeto.empty:
+        st.subheader("Principais Indicadores do Projeto")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if 'defeito' in df_projeto.columns:
+                # Pareto de defeitos
+                defeitos_count = df_projeto['defeito'].value_counts().head(10)
+                fig = px.bar(
+                    x=defeitos_count.index,
+                    y=defeitos_count.values,
+                    title="Top 10 Defeitos",
+                    labels={'x': 'Defeito', 'y': 'Frequência'}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            if 'horas_operacao' in df_projeto.columns:
+                # Histograma de horas de operação
+                fig = px.histogram(
+                    df_projeto,
+                    x='horas_operacao',
+                    title="Distribuição de Horas de Operação",
+                    nbins=20
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
 # Footer
 st.markdown("---")
