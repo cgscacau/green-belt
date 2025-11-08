@@ -1,556 +1,921 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
-import io
-import json
-from scipy import stats
-from supabase import create_client, Client
+from datetime import datetime, timedelta
+import numpy as np
 import os
+from supabase import create_client, Client
 
 # Configuração da página
 st.set_page_config(
     page_title="Improve - Green Belt",
-    page_icon="🛠️",
+    page_icon="🔧",
     layout="wide"
 )
 
-# Configuração do Supabase
+# ========================= FUNÇÕES AUXILIARES =========================
+
+# Inicializar Supabase
 @st.cache_resource
 def init_supabase():
-    url = os.environ.get("SUPABASE_URL", st.secrets.get("SUPABASE_URL", ""))
-    key = os.environ.get("SUPABASE_KEY", st.secrets.get("SUPABASE_KEY", ""))
-    if url and key:
-        return create_client(url, key)
-    return None
+    """Inicializa conexão com Supabase"""
+    try:
+        if "supabase" in st.secrets:
+            url = st.secrets["supabase"]["url"]
+            key = st.secrets["supabase"]["key"]
+        else:
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_KEY", "")
+        
+        if url and key:
+            return create_client(url, key)
+        return None
+    except Exception as e:
+        st.error(f"Erro ao conectar com Supabase: {str(e)}")
+        return None
 
 supabase = init_supabase()
 
-# Função para carregar dados do projeto do Supabase
+# Função para carregar projeto
+def load_project_from_db(project_name):
+    """Carrega dados do projeto do banco"""
+    if not supabase:
+        return None
+    
+    try:
+        response = supabase.table('projects').select("*").eq('project_name', project_name).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar projeto: {str(e)}")
+        return None
+
+# Função para listar projetos
 @st.cache_data(ttl=300)
-def load_project_data():
-    """Carrega os dados do projeto do Supabase"""
-    if supabase:
-        try:
-            # Carregar dados principais do projeto
-            response = supabase.table('project_data').select("*").execute()
-            if response.data:
-                df = pd.DataFrame(response.data)
-                # Converter colunas numéricas
-                numeric_columns = ['horas_operacao', 'tempo_parada_min', 'custo', 'quantidade', 'defeitos']
-                for col in numeric_columns:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                return df
-        except Exception as e:
-            st.error(f"Erro ao carregar dados: {e}")
+def list_projects():
+    """Lista todos os projetos disponíveis"""
+    if not supabase:
+        return []
     
-    # Se não houver dados no Supabase, verificar session_state
-    if 'project_df' in st.session_state:
-        return st.session_state.project_df
-    elif 'df' in st.session_state:
-        return st.session_state.df
+    try:
+        response = supabase.table('projects').select("project_name, project_leader, status").execute()
+        if response.data:
+            return response.data
+        return []
+    except Exception as e:
+        st.error(f"Erro ao listar projetos: {str(e)}")
+        return []
+
+# Função para buscar análises realizadas
+def load_analyses(project_name):
+    """Carrega análises realizadas do projeto"""
+    if not supabase:
+        return None
     
-    return pd.DataFrame()
+    try:
+        response = supabase.table('analyses').select("*").eq('project_name', project_name).execute()
+        if response.data:
+            return pd.DataFrame(response.data)
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar análises: {str(e)}")
+        return None
 
-# Função para carregar análises da página Analyze
-@st.cache_data(ttl=300)
-def load_analyze_results():
-    """Carrega resultados das análises já realizadas na página Analyze"""
-    if supabase:
-        try:
-            response = supabase.table('analyze_results').select("*").order('created_at', desc=True).execute()
-            if response.data:
-                return response.data
-        except:
-            pass
+# Função para salvar ação de melhoria
+def save_improvement_action(project_name, action_data):
+    """Salva ação de melhoria no banco"""
+    if not supabase:
+        return False
     
-    # Verificar session_state para análises
-    if 'analyze_results' in st.session_state:
-        return st.session_state.analyze_results
+    try:
+        action_data['project_name'] = project_name
+        action_data['created_at'] = datetime.now().isoformat()
+        action_data['updated_at'] = datetime.now().isoformat()
+        
+        response = supabase.table('improvement_actions').insert(action_data).execute()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar ação: {str(e)}")
+        return False
+
+# Função para carregar ações de melhoria
+def load_improvement_actions(project_name):
+    """Carrega ações de melhoria do projeto"""
+    if not supabase:
+        return None
     
-    return []
+    try:
+        response = supabase.table('improvement_actions').select("*").eq('project_name', project_name).order('priority').execute()
+        if response.data:
+            return pd.DataFrame(response.data)
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar ações: {str(e)}")
+        return None
 
-# Função para salvar plano de ação no Supabase
-def save_action_plan(action_data):
-    """Salva plano de ação no Supabase"""
+# Função para atualizar status de ação
+def update_action_status(action_id, new_status):
+    """Atualiza status de uma ação"""
+    if not supabase:
+        return False
+    
+    try:
+        response = supabase.table('improvement_actions').update({
+            'status': new_status,
+            'updated_at': datetime.now().isoformat()
+        }).eq('id', action_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao atualizar status: {str(e)}")
+        return False
+
+# ========================= SIDEBAR =========================
+
+with st.sidebar:
+    st.header("🗂️ Seleção de Projeto")
+    
+    if not supabase:
+        st.error("⚠️ Supabase não configurado")
+        use_local = st.checkbox("Usar modo local")
+    else:
+        use_local = False
+        st.success("✅ Conectado ao Supabase")
+    
+    st.divider()
+    
+    # Listar projetos
     if supabase:
-        try:
-            response = supabase.table('action_plans').insert(action_data).execute()
-            return True
-        except Exception as e:
-            st.error(f"Erro ao salvar plano de ação: {e}")
-    return False
+        projects = list_projects()
+        
+        if projects:
+            project_names = [p['project_name'] for p in projects]
+            
+            default_index = 0
+            if 'project_name' in st.session_state and st.session_state.project_name in project_names:
+                default_index = project_names.index(st.session_state.project_name) + 1
+            
+            selected_project = st.selectbox(
+                "Selecione um projeto:",
+                [""] + project_names,
+                index=default_index
+            )
+            
+            if selected_project:
+                if st.button("📂 Carregar Projeto", type="primary"):
+                    project_data = load_project_from_db(selected_project)
+                    if project_data:
+                        st.session_state.project_name = selected_project
+                        st.session_state.project_data = project_data
+                        st.success(f"✅ Projeto '{selected_project}' carregado!")
+                        st.rerun()
+        else:
+            st.warning("Nenhum projeto encontrado")
+    
+    # Mostrar projeto ativo
+    if 'project_name' in st.session_state:
+        st.divider()
+        st.success(f"📁 **Projeto Ativo:**")
+        st.write(f"_{st.session_state.project_name}_")
+        
+        # Carregar análises realizadas
+        analyses_df = load_analyses(st.session_state.project_name)
+        if analyses_df is not None and len(analyses_df) > 0:
+            st.metric("Análises Realizadas", len(analyses_df))
+            analysis_types = analyses_df['analysis_type'].unique()
+            for atype in analysis_types:
+                st.caption(f"✓ {atype}")
 
-# Função para carregar planos de ação salvos
-@st.cache_data(ttl=300)
-def load_action_plans():
-    """Carrega planos de ação do Supabase"""
+# ========================= INTERFACE PRINCIPAL =========================
+
+st.title("🔧 Improve — Implementação de Melhorias")
+st.markdown("Esta fase foca na implementação de soluções para os problemas identificados.")
+
+# Verificar se há projeto selecionado
+if 'project_name' not in st.session_state:
+    st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto na página Define.")
+    
     if supabase:
-        try:
-            response = supabase.table('action_plans').select("*").order('created_at', desc=True).execute()
-            if response.data:
-                return response.data
-        except:
-            pass
-    return []
-
-# Carregar dados do projeto
-df_projeto = load_project_data()
-analyze_results = load_analyze_results()
-
-# Inicializar session state
-if 'improvement_actions' not in st.session_state:
-    st.session_state.improvement_actions = load_action_plans()
-if 'ishikawa_causes' not in st.session_state:
-    st.session_state.ishikawa_causes = {
-        "Método": [],
-        "Máquina": [],
-        "Mão de Obra": [],
-        "Material": [],
-        "Medida": [],
-        "Meio Ambiente": []
-    }
-
-# Título e descrição
-st.title("🛠️ Improve - Implementação de Melhorias")
-st.markdown("""
-Esta fase foca na implementação de soluções para os problemas identificados.
-Vamos desenvolver, testar e implementar melhorias no processo.
-""")
-
-# Verificar se há dados carregados
-if df_projeto.empty:
-    st.warning("⚠️ Nenhum dado do projeto foi encontrado. Por favor, complete as fases anteriores primeiro.")
+        projects = list_projects()
+        if projects:
+            st.subheader("📂 Projetos Disponíveis")
+            df = pd.DataFrame(projects)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.info("👈 Use a barra lateral para selecionar um projeto")
     st.stop()
 
-# Mostrar estatísticas do projeto
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Registros", len(df_projeto))
-with col2:
-    st.metric("Variáveis", len(df_projeto.columns))
-with col3:
-    if 'defeitos' in df_projeto.columns:
-        st.metric("Total Defeitos", df_projeto['defeitos'].sum())
-with col4:
-    if 'custo' in df_projeto.columns:
-        st.metric("Custo Médio", f"R$ {df_projeto['custo'].mean():.2f}")
+# Projeto selecionado
+project_name = st.session_state.project_name
+project_data = st.session_state.get('project_data', {})
+
+st.info(f"📁 Projeto: **{project_name}**")
+
+# Verificar se há análises realizadas
+analyses_df = load_analyses(project_name)
+
+if analyses_df is None or len(analyses_df) == 0:
+    st.warning("⚠️ Nenhuma análise encontrada para este projeto.")
+    st.info("""
+    **Para começar a fase Improve:**
+    1. Complete a fase **Analyze** primeiro
+    2. Realize pelo menos uma análise de causa raiz
+    3. Identifique as principais causas do problema
+    """)
+    
+    if st.button("📊 Ir para Analyze"):
+        st.switch_page("pages/3_📊_Analyze.py")
+    st.stop()
+
+# Mostrar resumo das análises
+with st.expander("📊 Ver Análises Realizadas"):
+    st.dataframe(
+        analyses_df[['analysis_type', 'created_at']],
+        use_container_width=True,
+        hide_index=True
+    )
 
 # Tabs principais
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Análise de Causas",
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "💡 Brainstorming",
+    "🎯 Priorização",
     "📋 Plano de Ação",
     "🔬 Simulação",
-    "📈 Resultados da Análise"
+    "📈 Dashboard"
 ])
 
-# Tab 1: Análise de Causas (Ishikawa)
+# ========================= TAB 1: BRAINSTORMING =========================
+
 with tab1:
-    st.header("Análise de Causas Raiz")
+    st.header("💡 Sessão de Brainstorming")
+    st.markdown("Gere e organize ideias de melhoria baseadas nas análises realizadas")
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("Diagrama de Ishikawa (Espinha de Peixe)")
-        st.info("Adicione as causas identificadas na fase Analyze para cada categoria")
-        
-        # Input para causas
-        for categoria in st.session_state.ishikawa_causes:
-            with st.expander(f"📌 {categoria}"):
-                # Campo para adicionar nova causa
-                nova_causa = st.text_input(
-                    f"Adicionar causa em {categoria}",
-                    key=f"nova_causa_{categoria}"
+        # Formulário para adicionar ideias
+        with st.form("brainstorming_form", clear_on_submit=True):
+            st.subheader("Nova Ideia de Melhoria")
+            
+            idea_title = st.text_input("Título da Ideia *")
+            idea_description = st.text_area("Descrição Detalhada *", height=100)
+            
+            col_form1, col_form2 = st.columns(2)
+            with col_form1:
+                category = st.selectbox(
+                    "Categoria",
+                    ["Processo", "Tecnologia", "Pessoas", "Materiais", "Ambiente", "Método"]
                 )
-                if st.button(f"Adicionar", key=f"add_{categoria}"):
-                    if nova_causa and nova_causa not in st.session_state.ishikawa_causes[categoria]:
-                        st.session_state.ishikawa_causes[categoria].append(nova_causa)
-                        st.success(f"Causa adicionada em {categoria}")
-                        st.rerun()
-                
-                # Listar causas existentes
-                if st.session_state.ishikawa_causes[categoria]:
-                    st.write("**Causas cadastradas:**")
-                    for i, causa in enumerate(st.session_state.ishikawa_causes[categoria]):
-                        col_causa, col_remove = st.columns([4, 1])
-                        with col_causa:
-                            st.write(f"{i+1}. {causa}")
-                        with col_remove:
-                            if st.button("🗑️", key=f"del_{categoria}_{i}"):
-                                st.session_state.ishikawa_causes[categoria].pop(i)
-                                st.rerun()
-    
-    with col2:
-        st.subheader("Priorização de Causas")
-        
-        # Coletar todas as causas para priorização
-        todas_causas = []
-        for cat, causas_list in st.session_state.ishikawa_causes.items():
-            for causa in causas_list:
-                todas_causas.append({
-                    "Categoria": cat,
-                    "Causa": causa,
-                    "Impacto": 5,
-                    "Facilidade": 5,
-                    "Custo": 5
-                })
-        
-        if todas_causas:
-            st.write("Avalie cada causa (1-10):")
+                expected_impact = st.select_slider(
+                    "Impacto Esperado",
+                    options=["Muito Baixo", "Baixo", "Médio", "Alto", "Muito Alto"],
+                    value="Médio"
+                )
             
-            # Editor de dados para priorização
-            df_causas = pd.DataFrame(todas_causas)
+            with col_form2:
+                implementation_effort = st.select_slider(
+                    "Esforço de Implementação",
+                    options=["Muito Baixo", "Baixo", "Médio", "Alto", "Muito Alto"],
+                    value="Médio"
+                )
+                responsible = st.text_input("Responsável Sugerido")
             
-            df_editado = st.data_editor(
-                df_causas,
-                column_config={
-                    "Impacto": st.column_config.NumberColumn(
-                        "Impacto (1-10)",
-                        min_value=1,
-                        max_value=10,
-                        default=5
-                    ),
-                    "Facilidade": st.column_config.NumberColumn(
-                        "Facilidade (1-10)",
-                        min_value=1,
-                        max_value=10,
-                        default=5
-                    ),
-                    "Custo": st.column_config.NumberColumn(
-                        "Custo (1-10)",
-                        min_value=1,
-                        max_value=10,
-                        default=5
-                    )
-                },
-                hide_index=True,
-                key="causas_editor"
-            )
+            benefits = st.text_area("Benefícios Esperados", height=80)
+            risks = st.text_area("Riscos Potenciais", height=80)
             
-            # Calcular score
-            df_editado["Score"] = (
-                df_editado["Impacto"] * 0.5 +
-                df_editado["Facilidade"] * 0.3 +
-                (11 - df_editado["Custo"]) * 0.2
-            ) * 10
+            submitted = st.form_submit_button("➕ Adicionar Ideia", type="primary")
             
-            # Ordenar por score
-            df_editado = df_editado.sort_values("Score", ascending=False)
-            
-            # Mostrar top 3
-            if len(df_editado) > 0:
-                st.subheader("🏆 Top 3 Causas Prioritárias")
-                for idx, row in df_editado.head(3).iterrows():
-                    st.write(f"**#{idx+1}**")
-                    st.write(f"{row['Causa']}")
-                    st.write(f"*Categoria: {row['Categoria']}*")
-                    st.metric("Score", f"{row['Score']:.0f}")
-                    if row['Score'] >= 70:
-                        st.success("✅ Alta Prioridade")
-                    st.markdown("---")
-        else:
-            st.info("Adicione causas no diagrama de Ishikawa para realizar a priorização")
-
-# Tab 2: Plano de Ação
-with tab2:
-    st.header("Plano de Ação 5W2H")
-    
-    st.markdown("""
-    Desenvolva um plano de ação detalhado usando a metodologia 5W2H:
-    - **What** (O quê): O que será feito?
-    - **Why** (Por quê): Por que será feito?
-    - **Where** (Onde): Onde será feito?
-    - **When** (Quando): Quando será feito?
-    - **Who** (Quem): Quem fará?
-    - **How** (Como): Como será feito?
-    - **How Much** (Quanto): Quanto custará?
-    """)
-    
-    # Formulário de nova ação
-    with st.expander("➕ Adicionar Nova Ação", expanded=True):
-        with st.form("action_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                what = st.text_area("O QUÊ será feito?", height=100)
-                why = st.text_area("POR QUÊ será feito?", height=100)
-                where = st.text_input("ONDE será feito?")
-                when = st.date_input("QUANDO será feito?")
-            
-            with col2:
-                who = st.text_input("QUEM fará?")
-                how = st.text_area("COMO será feito?", height=100)
-                how_much = st.number_input("QUANTO custará? (R$)", min_value=0.0, step=100.0)
-                priority = st.selectbox("Prioridade", ["Alta", "Média", "Baixa"])
-            
-            submitted = st.form_submit_button("Adicionar Ação")
-            
-            if submitted and what and why:
-                action = {
-                    'what': what,
-                    'why': why,
-                    'where': where,
-                    'when': when.isoformat(),
-                    'who': who,
-                    'how': how,
-                    'how_much': float(how_much),
-                    'priority': priority,
-                    'status': 'Pendente',
-                    'created_at': datetime.now().isoformat()
-                }
-                
-                # Salvar no Supabase
-                if save_action_plan(action):
-                    st.session_state.improvement_actions.append(action)
-                    st.success("✅ Ação adicionada e salva no banco de dados!")
+            if submitted:
+                if idea_title and idea_description:
+                    # Adicionar ao session_state
+                    if 'brainstorm_ideas' not in st.session_state:
+                        st.session_state.brainstorm_ideas = []
+                    
+                    idea = {
+                        'title': idea_title,
+                        'description': idea_description,
+                        'category': category,
+                        'impact': expected_impact,
+                        'effort': implementation_effort,
+                        'responsible': responsible,
+                        'benefits': benefits,
+                        'risks': risks,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    st.session_state.brainstorm_ideas.append(idea)
+                    st.success("✅ Ideia adicionada!")
                     st.rerun()
                 else:
-                    st.session_state.improvement_actions.append(action)
-                    st.warning("Ação adicionada localmente (não foi possível salvar no banco)")
-    
-    # Visualização do Plano de Ação
-    if st.session_state.improvement_actions:
-        st.subheader("📋 Plano de Ação Atual")
-        
-        # Converter para DataFrame
-        df_actions = pd.DataFrame(st.session_state.improvement_actions)
-        
-        # Estatísticas
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total de Ações", len(df_actions))
-        with col2:
-            pending = len(df_actions[df_actions['status'] == 'Pendente'])
-            st.metric("Pendentes", pending)
-        with col3:
-            if 'how_much' in df_actions.columns:
-                total_cost = df_actions['how_much'].sum()
-                st.metric("Custo Total", f"R$ {total_cost:,.2f}")
-        with col4:
-            high_priority = len(df_actions[df_actions['priority'] == 'Alta'])
-            st.metric("Alta Prioridade", high_priority)
-        
-        # Tabela de ações
-        display_cols = ['what', 'who', 'when', 'priority', 'status']
-        if 'how_much' in df_actions.columns:
-            display_cols.append('how_much')
-        
-        st.dataframe(
-            df_actions[display_cols],
-            use_container_width=True,
-            hide_index=True
-        )
-
-# Tab 3: Simulação baseada em dados reais
-with tab3:
-    st.header("Simulação de Melhorias")
-    st.markdown("Simule o impacto das melhorias propostas nos indicadores do processo.")
-    
-    # Calcular métricas atuais dos dados reais do projeto
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Parâmetros Atuais 📊")
-        st.info("Valores calculados dos dados reais do projeto")
-        
-        # Calcular métricas dos dados
-        if 'defeitos' in df_projeto.columns:
-            current_defect_rate = (df_projeto['defeitos'].sum() / len(df_projeto)) * 100
-        else:
-            current_defect_rate = 5.0
-            
-        if 'tempo_parada_min' in df_projeto.columns:
-            current_cycle_time = df_projeto['tempo_parada_min'].mean()
-        else:
-            current_cycle_time = 15.0
-            
-        if 'custo' in df_projeto.columns:
-            current_cost = df_projeto['custo'].mean()
-        else:
-            current_cost = 25.0
-            
-        if 'horas_operacao' in df_projeto.columns:
-            current_productivity = len(df_projeto) / df_projeto['horas_operacao'].sum() * 60
-        else:
-            current_productivity = 50.0
-        
-        st.metric("Taxa de Defeitos Atual", f"{current_defect_rate:.2f}%")
-        st.metric("Tempo de Ciclo Atual", f"{current_cycle_time:.2f} min")
-        st.metric("Custo por Unidade Atual", f"R$ {current_cost:.2f}")
-        st.metric("Produtividade Atual", f"{current_productivity:.2f} un/hora")
+                    st.error("Preencha os campos obrigatórios")
     
     with col2:
-        st.subheader("Parâmetros Esperados (Após Melhorias)")
+        st.info("""
+        **💡 Dicas para Brainstorming:**
         
-        expected_defect_rate = st.slider(
-            "Taxa de Defeitos Esperada (%)",
-            min_value=0.0,
-            max_value=current_defect_rate,
-            value=current_defect_rate * 0.4,
-            step=0.1
-        )
+        **Técnicas:**
+        - SCAMPER
+        - 6 Thinking Hats
+        - Mind Mapping
+        - Reverse Brainstorming
         
-        expected_cycle_time = st.slider(
-            "Tempo de Ciclo Esperado (min)",
-            min_value=1.0,
-            max_value=current_cycle_time,
-            value=current_cycle_time * 0.67,
-            step=0.5
-        )
-        
-        expected_cost = st.slider(
-            "Custo por Unidade Esperado (R$)",
-            min_value=1.0,
-            max_value=current_cost,
-            value=current_cost * 0.8,
-            step=0.5
-        )
-        
-        expected_productivity = st.slider(
-            "Produtividade Esperada (un/hora)",
-            min_value=current_productivity,
-            max_value=current_productivity * 2,
-            value=current_productivity * 1.5,
-            step=1.0
-        )
+        **Regras:**
+        - Quantidade sobre qualidade
+        - Sem julgamentos
+        - Construa sobre outras ideias
+        - Pense fora da caixa
+        """)
     
-    # Análise de Impacto
-    st.subheader("📊 Análise de Impacto")
+    # Exibir ideias cadastradas
+    if 'brainstorm_ideas' in st.session_state and st.session_state.brainstorm_ideas:
+        st.divider()
+        st.subheader("💭 Ideias Geradas")
+        
+        ideas_df = pd.DataFrame(st.session_state.brainstorm_ideas)
+        
+        # Filtros
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_category = st.multiselect(
+                "Filtrar por Categoria",
+                ideas_df['category'].unique()
+            )
+        with col2:
+            filter_impact = st.multiselect(
+                "Filtrar por Impacto",
+                ["Muito Baixo", "Baixo", "Médio", "Alto", "Muito Alto"]
+            )
+        
+        # Aplicar filtros
+        filtered_df = ideas_df.copy()
+        if filter_category:
+            filtered_df = filtered_df[filtered_df['category'].isin(filter_category)]
+        if filter_impact:
+            filtered_df = filtered_df[filtered_df['impact'].isin(filter_impact)]
+        
+        # Cards de ideias
+        for idx, idea in filtered_df.iterrows():
+            with st.expander(f"💡 {idea['title']} - {idea['category']}"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**Descrição:** {idea['description']}")
+                    if idea['benefits']:
+                        st.write(f"**Benefícios:** {idea['benefits']}")
+                    if idea['risks']:
+                        st.write(f"**Riscos:** {idea['risks']}")
+                with col2:
+                    st.metric("Impacto", idea['impact'])
+                    st.metric("Esforço", idea['effort'])
+                    if idea['responsible']:
+                        st.caption(f"Responsável: {idea['responsible']}")
+
+# ========================= TAB 2: PRIORIZAÇÃO =========================
+
+with tab2:
+    st.header("🎯 Matriz de Priorização")
+    st.markdown("Priorize as ideias usando a matriz Impacto vs Esforço")
     
+    if 'brainstorm_ideas' in st.session_state and st.session_state.brainstorm_ideas:
+        # Converter impacto e esforço para valores numéricos
+        impact_map = {
+            "Muito Baixo": 1, "Baixo": 2, "Médio": 3, 
+            "Alto": 4, "Muito Alto": 5
+        }
+        effort_map = {
+            "Muito Baixo": 1, "Baixo": 2, "Médio": 3,
+            "Alto": 4, "Muito Alto": 5
+        }
+        
+        # Preparar dados para o gráfico
+        plot_data = []
+        for idea in st.session_state.brainstorm_ideas:
+            plot_data.append({
+                'title': idea['title'],
+                'impact_value': impact_map[idea['impact']],
+                'effort_value': effort_map[idea['effort']],
+                'category': idea['category']
+            })
+        
+        plot_df = pd.DataFrame(plot_data)
+        
+        # Criar scatter plot
+        fig = px.scatter(
+            plot_df,
+            x='effort_value',
+            y='impact_value',
+            text='title',
+            color='category',
+            title='Matriz de Priorização: Impacto vs Esforço',
+            labels={'effort_value': 'Esforço →', 'impact_value': 'Impacto →'},
+            hover_data=['title', 'category']
+        )
+        
+        # Adicionar quadrantes
+        fig.add_hline(y=3, line_dash="dash", line_color="gray", opacity=0.5)
+        fig.add_vline(x=3, line_dash="dash", line_color="gray", opacity=0.5)
+        
+        # Adicionar anotações dos quadrantes
+        fig.add_annotation(x=1.5, y=4.5, text="Quick Wins", showarrow=False,
+                          font=dict(size=12, color="green"))
+        fig.add_annotation(x=4.5, y=4.5, text="Grandes Projetos", showarrow=False,
+                          font=dict(size=12, color="orange"))
+        fig.add_annotation(x=1.5, y=1.5, text="Fill Ins", showarrow=False,
+                          font=dict(size=12, color="gray"))
+        fig.add_annotation(x=4.5, y=1.5, text="Questionáveis", showarrow=False,
+                          font=dict(size=12, color="red"))
+        
+        fig.update_layout(
+            xaxis=dict(range=[0.5, 5.5], tickvals=[1,2,3,4,5],
+                      ticktext=['Muito Baixo', 'Baixo', 'Médio', 'Alto', 'Muito Alto']),
+            yaxis=dict(range=[0.5, 5.5], tickvals=[1,2,3,4,5],
+                      ticktext=['Muito Baixo', 'Baixo', 'Médio', 'Alto', 'Muito Alto']),
+            height=500
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Análise dos quadrantes
+        st.divider()
+        st.subheader("📊 Análise da Priorização")
+        
+        # Quick Wins (Alto impacto, Baixo esforço)
+        quick_wins = plot_df[(plot_df['impact_value'] >= 3) & (plot_df['effort_value'] <= 3)]
+        grandes_projetos = plot_df[(plot_df['impact_value'] >= 3) & (plot_df['effort_value'] > 3)]
+        fill_ins = plot_df[(plot_df['impact_value'] < 3) & (plot_df['effort_value'] <= 3)]
+        questionaveis = plot_df[(plot_df['impact_value'] < 3) & (plot_df['effort_value'] > 3)]
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("🎯 Quick Wins", len(quick_wins))
+            if len(quick_wins) > 0:
+                for title in quick_wins['title']:
+                    st.caption(f"• {title}")
+        
+        with col2:
+            st.metric("🚀 Grandes Projetos", len(grandes_projetos))
+            if len(grandes_projetos) > 0:
+                for title in grandes_projetos['title']:
+                    st.caption(f"• {title}")
+        
+        with col3:
+            st.metric("📌 Fill Ins", len(fill_ins))
+            if len(fill_ins) > 0:
+                for title in fill_ins['title']:
+                    st.caption(f"• {title}")
+        
+        with col4:
+            st.metric("❓ Questionáveis", len(questionaveis))
+            if len(questionaveis) > 0:
+                for title in questionaveis['title']:
+                    st.caption(f"• {title}")
+        
+        # Recomendação
+        st.success(f"""
+        **💡 Recomendação:**
+        Priorize as {len(quick_wins)} ideias classificadas como **Quick Wins**.
+        Estas oferecem alto impacto com baixo esforço de implementação.
+        """)
+    else:
+        st.info("Adicione ideias na aba Brainstorming primeiro")
+
+# ========================= TAB 3: PLANO DE AÇÃO =========================
+
+with tab3:
+    st.header("📋 Plano de Ação Detalhado")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        with st.form("action_plan_form", clear_on_submit=True):
+            st.subheader("Nova Ação")
+            
+            action_title = st.text_input("Título da Ação *")
+            action_description = st.text_area("Descrição Detalhada *", height=100)
+            
+            col_form1, col_form2, col_form3 = st.columns(3)
+            
+            with col_form1:
+                responsible = st.text_input("Responsável *")
+                impact_level = st.selectbox(
+                    "Nível de Impacto",
+                    ["Baixo", "Médio", "Alto", "Crítico"]
+                )
+            
+            with col_form2:
+                due_date = st.date_input("Data de Conclusão", 
+                                        min_value=datetime.now().date())
+                effort_level = st.selectbox(
+                    "Nível de Esforço",
+                    ["Baixo", "Médio", "Alto", "Muito Alto"]
+                )
+            
+            with col_form3:
+                status = st.selectbox(
+                    "Status",
+                    ["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"]
+                )
+                priority = st.number_input("Prioridade (1-10)", 1, 10, 5)
+            
+            success_criteria = st.text_area("Critérios de Sucesso", height=80)
+            resources_needed = st.text_area("Recursos Necessários", height=80)
+            
+            submitted = st.form_submit_button("➕ Adicionar Ação", type="primary")
+            
+            if submitted:
+                if all([action_title, action_description, responsible]):
+                    action = {
+                        'action_title': action_title,
+                        'description': action_description,
+                        'responsible': responsible,
+                        'due_date': due_date.isoformat(),
+                        'status': status,
+                        'impact_level': impact_level,
+                        'effort_level': effort_level,
+                        'priority': priority,
+                        'success_criteria': success_criteria,
+                        'resources_needed': resources_needed
+                    }
+                    
+                    if save_improvement_action(project_name, action):
+                        st.success("✅ Ação adicionada com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("Erro ao salvar ação")
+                else:
+                    st.error("Preencha os campos obrigatórios")
+    
+    with col2:
+        st.info("""
+        **📋 Estrutura 5W2H:**
+        
+        - **What:** O que será feito?
+        - **Why:** Por que fazer?
+        - **Who:** Quem fará?
+        - **When:** Quando será feito?
+        - **Where:** Onde será feito?
+        - **How:** Como será feito?
+        - **How Much:** Quanto custará?
+        """)
+    
+    # Exibir plano de ação
+    actions_df = load_improvement_actions(project_name)
+    
+    if actions_df is not None and len(actions_df) > 0:
+        st.divider()
+        st.subheader("📊 Ações Cadastradas")
+        
+        # Filtros
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            filter_status = st.multiselect(
+                "Filtrar por Status",
+                actions_df['status'].unique(),
+                default=["Não Iniciado", "Em Andamento"]
+            )
+        with col2:
+            filter_responsible = st.multiselect(
+                "Filtrar por Responsável",
+                actions_df['responsible'].unique()
+            )
+        with col3:
+            filter_impact = st.multiselect(
+                "Filtrar por Impacto",
+                actions_df['impact_level'].unique()
+            )
+        
+        # Aplicar filtros
+        filtered_actions = actions_df.copy()
+        if filter_status:
+            filtered_actions = filtered_actions[filtered_actions['status'].isin(filter_status)]
+        if filter_responsible:
+            filtered_actions = filtered_actions[filtered_actions['responsible'].isin(filter_responsible)]
+        if filter_impact:
+            filtered_actions = filtered_actions[filtered_actions['impact_level'].isin(filter_impact)]
+        
+        # Exibir ações
+        for idx, action in filtered_actions.iterrows():
+            with st.expander(f"📌 {action['action_title']} - {action['status']}"):
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                with col1:
+                    st.write(f"**Descrição:** {action['description']}")
+                    if pd.notna(action.get('success_criteria')):
+                        st.write(f"**Critérios de Sucesso:** {action['success_criteria']}")
+                    if pd.notna(action.get('resources_needed')):
+                        st.write(f"**Recursos:** {action['resources_needed']}")
+                
+                with col2:
+                    st.metric("Responsável", action['responsible'])
+                    st.metric("Prioridade", action['priority'])
+                    st.metric("Impacto", action['impact_level'])
+                
+                with col3:
+                    st.metric("Prazo", action['due_date'])
+                    st.metric("Esforço", action['effort_level'])
+                    
+                    # Botão para atualizar status
+                    new_status = st.selectbox(
+                        "Atualizar Status",
+                        ["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"],
+                        index=["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"].index(action['status']),
+                        key=f"status_{action['id']}"
+                    )
+                    
+                    if st.button("Atualizar", key=f"update_{action['id']}"):
+                        if update_action_status(action['id'], new_status):
+                            st.success("Status atualizado!")
+                            st.rerun()
+        
+        # Gantt Chart
+        st.divider()
+        st.subheader("📅 Cronograma de Ações (Gantt)")
+        
+        # Preparar dados para Gantt
+        gantt_data = []
+        for idx, action in filtered_actions.iterrows():
+            gantt_data.append({
+                'Task': action['action_title'],
+                'Start': datetime.now().date(),
+                'Finish': pd.to_datetime(action['due_date']).date(),
+                'Resource': action['responsible'],
+                'Status': action['status']
+            })
+        
+        if gantt_data:
+            gantt_df = pd.DataFrame(gantt_data)
+            
+            # Criar gráfico Gantt
+            fig = px.timeline(
+                gantt_df,
+                x_start="Start",
+                x_end="Finish",
+                y="Task",
+                color="Status",
+                hover_data=["Resource", "Status"],
+                title="Cronograma de Implementação"
+            )
+            
+            fig.update_yaxes(autorange="reversed")
+            fig.update_layout(height=400)
+            
+            st.plotly_chart(fig, use_container_width=True)
+
+# ========================= TAB 4: SIMULAÇÃO =========================
+
+with tab4:
+    st.header("🔬 Simulação de Melhorias")
+    st.markdown("Simule o impacto das melhorias propostas")
+    
+    # Dados do projeto
+    baseline = project_data.get('baseline_value', 100)
+    target = project_data.get('target_value', 80)
+    metric = project_data.get('primary_metric', 'Métrica')
+    
+    st.subheader("📊 Simulação de Cenários")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Parâmetros da simulação
+        st.write("**Configure os Parâmetros:**")
+        
+        improvement_percentage = st.slider(
+            "Melhoria Esperada (%)",
+            min_value=0,
+            max_value=100,
+            value=20,
+            step=5
+        )
+        
+        confidence_level = st.slider(
+            "Nível de Confiança (%)",
+            min_value=50,
+            max_value=99,
+            value=80,
+            step=5
+        )
+        
+        implementation_time = st.slider(
+            "Tempo de Implementação (dias)",
+            min_value=7,
+            max_value=180,
+            value=30,
+            step=7
+        )
+        
+        # Calcular valores simulados
+        current_value = baseline
+        expected_value = current_value * (1 - improvement_percentage/100)
+        
+        # Simular variação
+        np.random.seed(42)
+        days = np.arange(0, implementation_time + 1)
+        
+        # Cenários
+        best_case = current_value - (current_value - expected_value) * 1.2
+        worst_case = current_value - (current_value - expected_value) * 0.5
+        
+        # Simulação com ruído
+        simulated_values = []
+        for day in days:
+            progress = day / implementation_time
+            value = current_value - (current_value - expected_value) * progress
+            noise = np.random.normal(0, value * 0.05)
+            simulated_values.append(value + noise)
+        
+        # Criar gráfico de simulação
+        fig = go.Figure()
+        
+        # Linha de simulação
+        fig.add_trace(go.Scatter(
+            x=days,
+            y=simulated_values,
+            mode='lines',
+            name='Simulação',
+            line=dict(color='blue', width=2)
+        ))
+        
+        # Linha de meta
+        fig.add_hline(
+            y=target,
+            line_dash="dash",
+            line_color="green",
+            annotation_text=f"Meta: {target}"
+        )
+        
+        # Linha baseline
+        fig.add_hline(
+            y=baseline,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Baseline: {baseline}"
+        )
+        
+        # Área de confiança
+        upper_bound = [v * (1 + (100-confidence_level)/200) for v in simulated_values]
+        lower_bound = [v * (1 - (100-confidence_level)/200) for v in simulated_values]
+        
+        fig.add_trace(go.Scatter(
+            x=days,
+            y=upper_bound,
+            fill=None,
+            mode='lines',
+            line_color='rgba(0,100,80,0)',
+            showlegend=False
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=days,
+            y=lower_bound,
+            fill='tonexty',
+            mode='lines',
+            line_color='rgba(0,100,80,0)',
+            name=f'Intervalo {confidence_level}%',
+            fillcolor='rgba(0,100,80,0.2)'
+        ))
+        
+        fig.update_layout(
+            title=f"Simulação de Melhoria - {metric}",
+            xaxis_title="Dias",
+            yaxis_title=metric,
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.write("**📊 Resultados da Simulação:**")
+        
+        st.metric("Valor Atual", f"{current_value:.1f}")
+        st.metric("Valor Esperado", f"{expected_value:.1f}",
+                 f"{expected_value - current_value:.1f}")
+        
+        st.divider()
+        
+        st.metric("Melhor Cenário", f"{best_case:.1f}")
+        st.metric("Pior Cenário", f"{worst_case:.1f}")
+        
+        st.divider()
+        
+        # Probabilidade de sucesso
+        prob_success = confidence_level if expected_value <= target else confidence_level * (target/expected_value)
+        st.metric("Prob. de Atingir Meta", f"{prob_success:.0f}%")
+        
+        # ROI estimado
+        if project_data.get('expected_savings'):
+            roi = (project_data['expected_savings'] * improvement_percentage/100) / 1000
+            st.metric("ROI Estimado", f"R$ {roi:.0f}k")
+
+# ========================= TAB 5: DASHBOARD =========================
+
+with tab5:
+    st.header("📈 Dashboard de Acompanhamento")
+    
+    # Métricas gerais
     col1, col2, col3, col4 = st.columns(4)
     
-    with col1:
-        defect_reduction = ((current_defect_rate - expected_defect_rate) / current_defect_rate) * 100 if current_defect_rate > 0 else 0
-        st.metric(
-            "Redução de Defeitos",
-            f"{defect_reduction:.1f}%",
-            f"↑ {current_defect_rate - expected_defect_rate:.1f} pp"
-        )
+    # Carregar dados
+    actions_df = load_improvement_actions(project_name)
     
-    with col2:
-        cycle_improvement = ((current_cycle_time - expected_cycle_time) / current_cycle_time) * 100 if current_cycle_time > 0 else 0
-        st.metric(
-            "Redução Tempo Ciclo",
-            f"{cycle_improvement:.1f}%",
-            f"↓ {current_cycle_time - expected_cycle_time:.1f} min"
-        )
-    
-    with col3:
-        cost_reduction = ((current_cost - expected_cost) / current_cost) * 100 if current_cost > 0 else 0
-        st.metric(
-            "Redução de Custo",
-            f"{cost_reduction:.1f}%",
-            f"↓ R$ {current_cost - expected_cost:.2f}"
-        )
-    
-    with col4:
-        productivity_gain = ((expected_productivity - current_productivity) / current_productivity) * 100 if current_productivity > 0 else 0
-        st.metric(
-            "Ganho Produtividade",
-            f"{productivity_gain:.1f}%",
-            f"↑ +{expected_productivity - current_productivity:.0f} un/h"
-        )
-    
-    # Comparação Visual
-    st.subheader("Comparação Visual")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Gráfico de barras
-        comparison_data = pd.DataFrame({
-            'Indicador': ['Taxa Defeitos (%)', 'Tempo Ciclo (min)', 'Custo (R$)', 'Produtividade (un/h)'],
-            'Atual': [current_defect_rate, current_cycle_time, current_cost, current_productivity],
-            'Esperado': [expected_defect_rate, expected_cycle_time, expected_cost, expected_productivity]
-        })
+    if actions_df is not None and len(actions_df) > 0:
+        with col1:
+            total_actions = len(actions_df)
+            st.metric("Total de Ações", total_actions)
         
-        fig_bar = go.Figure()
-        fig_bar.add_trace(go.Bar(name='Atual', x=comparison_data['Indicador'], y=comparison_data['Atual']))
-        fig_bar.add_trace(go.Bar(name='Esperado', x=comparison_data['Indicador'], y=comparison_data['Esperado']))
-        fig_bar.update_layout(
-            title='Comparação de Indicadores',
-            barmode='group',
-            height=400
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
-    
-    with col2:
-        # Gráfico radar
-        categories = ['Taxa Defeitos', 'Tempo Ciclo', 'Custo', 'Produtividade']
+        with col2:
+            completed = len(actions_df[actions_df['status'] == 'Concluído'])
+            completion_rate = (completed / total_actions * 100) if total_actions > 0 else 0
+            st.metric("Taxa de Conclusão", f"{completion_rate:.0f}%")
         
-        atual_norm = [
-            100 - (current_defect_rate * 5) if current_defect_rate <= 20 else 0,
-            100 - (current_cycle_time * 1.67) if current_cycle_time <= 60 else 0,
-            100 - current_cost if current_cost <= 100 else 0,
-            current_productivity / 2 if current_productivity <= 200 else 100
-        ]
+        with col3:
+            in_progress = len(actions_df[actions_df['status'] == 'Em Andamento'])
+            st.metric("Em Andamento", in_progress)
         
-        esperado_norm = [
-            100 - (expected_defect_rate * 5),
-            100 - (expected_cycle_time * 1.67),
-            100 - expected_cost,
-            expected_productivity / 2
-        ]
+        with col4:
+            high_priority = len(actions_df[actions_df['priority'] >= 8])
+            st.metric("Alta Prioridade", high_priority)
         
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(
-            r=atual_norm, theta=categories, fill='toself', name='Atual'
-        ))
-        fig_radar.add_trace(go.Scatterpolar(
-            r=esperado_norm, theta=categories, fill='toself', name='Esperado'
-        ))
-        fig_radar.update_layout(
-            title="Análise Radar de Desempenho",
-            height=400
-        )
-        st.plotly_chart(fig_radar, use_container_width=True)
-
-# Tab 4: Resultados da Análise
-with tab4:
-    st.header("📈 Resultados da Fase Analyze")
-    
-    if analyze_results:
-        st.success(f"Encontradas {len(analyze_results)} análises realizadas")
+        st.divider()
         
-        # Mostrar resumo das análises
-        for result in analyze_results:
-            with st.expander(f"Análise: {result.get('type', 'N/A')} - {result.get('date', 'N/A')}"):
-                st.json(result)
-    else:
-        st.info("Nenhuma análise da fase Analyze foi encontrada. Complete a fase Analyze primeiro.")
-    
-    # Mostrar gráficos e resultados importantes da fase Analyze
-    if not df_projeto.empty:
-        st.subheader("Principais Indicadores do Projeto")
-        
+        # Gráficos
         col1, col2 = st.columns(2)
         
         with col1:
-            if 'defeito' in df_projeto.columns:
-                # Pareto de defeitos
-                defeitos_count = df_projeto['defeito'].value_counts().head(10)
-                fig = px.bar(
-                    x=defeitos_count.index,
-                    y=defeitos_count.values,
-                    title="Top 10 Defeitos",
-                    labels={'x': 'Defeito', 'y': 'Frequência'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            # Gráfico de status
+            status_counts = actions_df['status'].value_counts()
+            
+            fig_status = px.pie(
+                values=status_counts.values,
+                names=status_counts.index,
+                title="Distribuição por Status",
+                color_discrete_map={
+                    'Concluído': 'green',
+                    'Em Andamento': 'blue',
+                    'Não Iniciado': 'gray',
+                    'Pausado': 'orange',
+                    'Cancelado': 'red'
+                }
+            )
+            st.plotly_chart(fig_status, use_container_width=True)
         
         with col2:
-            if 'horas_operacao' in df_projeto.columns:
-                # Histograma de horas de operação
-                fig = px.histogram(
-                    df_projeto,
-                    x='horas_operacao',
-                    title="Distribuição de Horas de Operação",
-                    nbins=20
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            # Gráfico de responsáveis
+            resp_counts = actions_df['responsible'].value_counts().head(5)
+            
+            fig_resp = px.bar(
+                x=resp_counts.values,
+                y=resp_counts.index,
+                orientation='h',
+                title="Top 5 Responsáveis",
+                labels={'x': 'Número de Ações', 'y': 'Responsável'}
+            )
+            st.plotly_chart(fig_resp, use_container_width=True)
+        
+        # Timeline de ações
+        st.divider()
+        st.subheader("📅 Timeline de Ações")
+        
+        # Preparar dados para timeline
+        timeline_data = []
+        for idx, action in actions_df.iterrows():
+            color = {
+                'Concluído': 'green',
+                'Em Andamento': 'blue',
+                'Não Iniciado': 'gray',
+                'Pausado': 'orange',
+                'Cancelado': 'red'
+            }.get(action['status'], 'gray')
+            
+            timeline_data.append({
+                'Ação': action['action_title'][:30] + '...' if len(action['action_title']) > 30 else action['action_title'],
+                'Responsável': action['responsible'],
+                'Prazo': pd.to_datetime(action['due_date']),
+                'Status': action['status'],
+                'Prioridade': action['priority']
+            })
+        
+        timeline_df = pd.DataFrame(timeline_data)
+        timeline_df = timeline_df.sort_values('Prazo')
+        
+        # Exibir tabela
+        st.dataframe(
+            timeline_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Prioridade": st.column_config.ProgressColumn(
+                    "Prioridade",
+                    min_value=0,
+                    max_value=10,
+                    format="%d"
+                ),
+                "Prazo": st.column_config.DateColumn("Prazo", format="DD/MM/YYYY")
+            }
+        )
+    else:
+        st.info("Nenhuma ação cadastrada ainda. Adicione ações na aba 'Plano de Ação'.")
 
 # Footer
-st.markdown("---")
-st.markdown("🎯 **Fase Improve** - Green Belt Project | Implementação de Melhorias")
+st.divider()
+st.caption("💡 **Dica:** Foque primeiro nas ações classificadas como 'Quick Wins' para obter resultados rápidos")
