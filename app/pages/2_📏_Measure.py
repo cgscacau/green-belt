@@ -3,1084 +3,1077 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-from scipy import stats
+from datetime import datetime
 import io
+from scipy import stats
 
 # Configuração da página
 st.set_page_config(
-    page_title="Measure - Green Belt",
-    page_icon="📏",
+    page_title="Measure - Green Belt Project",
+    page_icon="📊",
     layout="wide"
 )
 
 # Inicializar Supabase
-try:
-    from supabase import create_client, Client
-    
-    @st.cache_resource
-    def init_supabase():
-        url = st.secrets.get("SUPABASE_URL", "")
-        key = st.secrets.get("SUPABASE_KEY", "")
-        if url and key:
-            return create_client(url, key)
-        return None
-    
-    supabase = init_supabase()
-except Exception as e:
-    st.warning(f"Supabase não configurado: {e}")
-    supabase = None
+from supabase import create_client, Client
 
-# Título
-st.title("📏 Measure - Coleta, Validação e Padronização de Dados")
+@st.cache_resource
+def init_supabase():
+    url = st.secrets.get("SUPABASE_URL", "")
+    key = st.secrets.get("SUPABASE_KEY", "")
+    if url and key:
+        return create_client(url, key)
+    return None
 
-# Verificar se há projeto selecionado
-if 'project_id' not in st.session_state or st.session_state.project_id is None:
-    st.warning("⚠️ Nenhum projeto selecionado")
-    
-    if supabase:
-        st.info("Por favor, selecione ou crie um projeto na página **Define** primeiro.")
-        
-        try:
-            projects = supabase.table('projects').select("*").order('created_at', desc=True).execute()
-            
-            if projects.data:
-                st.subheader("Ou selecione um projeto existente:")
-                
-                project_names = [p['name'] for p in projects.data]
-                selected_project = st.selectbox("Projeto:", project_names)
-                
-                if st.button("Carregar Projeto"):
-                    selected = next(p for p in projects.data if p['name'] == selected_project)
-                    st.session_state.project_id = selected['id']
-                    st.session_state.project_name = selected['name']
-                    st.success(f"✅ Projeto '{selected['name']}' carregado!")
-                    st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao carregar projetos: {e}")
-    
+supabase = init_supabase()
+
+if not supabase:
+    st.error("⚠️ Supabase não configurado!")
     st.stop()
 
-# Mostrar projeto ativo
-st.success(f"📁 Projeto Ativo: ID {st.session_state.project_id}")
+# Verificar projeto ativo
+if 'current_project_id' not in st.session_state or not st.session_state.current_project_id:
+    st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto na página inicial.")
+    st.stop()
+
+# Header
+st.title("📊 Measure - Coleta e Análise de Dados")
+st.info(f"📁 Projeto: **{st.session_state.get('current_project_name', 'Não identificado')}**")
 
 # Inicializar session state
-if 'measure_data' not in st.session_state:
-    st.session_state.measure_data = pd.DataFrame()
-if 'custom_fields' not in st.session_state:
-    st.session_state.custom_fields = []
+if 'uploaded_data' not in st.session_state:
+    st.session_state.uploaded_data = None
+if 'data_columns' not in st.session_state:
+    st.session_state.data_columns = []
+if 'column_types' not in st.session_state:
+    st.session_state.column_types = {}
 
-# Tabs principais
+# Carregar configuração de medição existente
+try:
+    config_response = supabase.table('measure_config').select("*").eq('project_id', st.session_state.current_project_id).execute()
+    existing_config = config_response.data[0] if config_response.data else {}
+except:
+    existing_config = {}
+
+# Tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "⚙️ Configurar Campos",
-    "📊 Coleta de Dados",
-    "🔍 Análise Exploratória",
+    "📤 Upload de Dados",
+    "📊 Visualização",
     "📈 Estatísticas",
+    "🎯 Capacidade do Processo",
     "✅ Validação",
     "💾 Dados Salvos"
 ])
 
-# Tab 1: Configurar Campos Personalizados
+# Tab 1: Upload de Dados
 with tab1:
-    st.header("Configurar Campos do Projeto")
-    st.info("Configure os campos específicos para coleta de dados do seu projeto")
+    st.header("Upload e Configuração de Dados")
     
-    col1, col2 = st.columns([1, 1])
+    # Opções de entrada de dados
+    data_input_method = st.radio(
+        "Método de entrada de dados:",
+        ["📤 Upload de arquivo (CSV/Excel)", "📝 Entrada manual", "🔄 Usar dados salvos"]
+    )
     
-    with col1:
-        st.subheader("➕ Adicionar Campo")
+    if "📤 Upload" in data_input_method:
+        st.subheader("Upload de Arquivo")
         
-        with st.form("add_field_form"):
-            field_name = st.text_input("Nome do Campo", placeholder="Ex: temperatura, pressao, defeitos")
-            
-            field_type = st.selectbox(
-                "Tipo de Dado",
-                ["Texto", "Número Inteiro", "Número Decimal", "Data", "Sim/Não", "Lista de Opções"]
-            )
-            
-            field_required = st.checkbox("Campo Obrigatório")
-            
-            field_description = st.text_area("Descrição/Instrução", placeholder="Descreva como este campo deve ser preenchido")
-            
-            # Configurações específicas por tipo
-            field_config = {}
-            
-            if field_type == "Número Inteiro":
-                col_min, col_max = st.columns(2)
-                with col_min:
-                    field_config['min'] = st.number_input("Valor Mínimo", value=0)
-                with col_max:
-                    field_config['max'] = st.number_input("Valor Máximo", value=1000)
-                    
-            elif field_type == "Número Decimal":
-                col_min, col_max, col_step = st.columns(3)
-                with col_min:
-                    field_config['min'] = st.number_input("Mínimo", value=0.0)
-                with col_max:
-                    field_config['max'] = st.number_input("Máximo", value=100.0)
-                with col_step:
-                    field_config['step'] = st.number_input("Incremento", value=0.1, min_value=0.01)
-                    
-            elif field_type == "Lista de Opções":
-                options_text = st.text_area(
-                    "Opções (uma por linha)",
-                    placeholder="Opção 1\nOpção 2\nOpção 3"
-                )
-                field_config['options'] = [opt.strip() for opt in options_text.split('\n') if opt.strip()]
-            
-            submitted = st.form_submit_button("Adicionar Campo", type="primary")
-            
-            if submitted and field_name:
-                # Criar campo personalizado
-                new_field = {
-                    'name': field_name.lower().replace(' ', '_'),
-                    'label': field_name,
-                    'type': field_type,
-                    'required': field_required,
-                    'description': field_description,
-                    'config': field_config
-                }
-                
-                # Adicionar ao session state
-                if 'custom_fields' not in st.session_state:
-                    st.session_state.custom_fields = []
-                
-                # Verificar duplicatas
-                if not any(f['name'] == new_field['name'] for f in st.session_state.custom_fields):
-                    st.session_state.custom_fields.append(new_field)
-                    st.success(f"✅ Campo '{field_name}' adicionado!")
-                    st.rerun()
-                else:
-                    st.error("Campo já existe!")
-    
-    with col2:
-        st.subheader("📋 Campos Configurados")
-        
-        # Campos padrão sempre presentes
-        st.write("**Campos Padrão:**")
-        default_fields = [
-            "ID do Registro",
-            "Data de Coleta",
-            "Responsável pela Coleta"
-        ]
-        for field in default_fields:
-            st.write(f"• {field}")
-        
-        st.divider()
-        
-        # Campos personalizados
-        st.write("**Campos Personalizados:**")
-        
-        if st.session_state.custom_fields:
-            for idx, field in enumerate(st.session_state.custom_fields):
-                with st.expander(f"{field['label']} ({field['type']})"):
-                    st.write(f"**Nome técnico:** {field['name']}")
-                    st.write(f"**Obrigatório:** {'Sim' if field['required'] else 'Não'}")
-                    if field['description']:
-                        st.write(f"**Descrição:** {field['description']}")
-                    if field['config']:
-                        st.write(f"**Configuração:** {field['config']}")
-                    
-                    if st.button(f"🗑️ Remover", key=f"remove_field_{idx}"):
-                        st.session_state.custom_fields.pop(idx)
-                        st.rerun()
-        else:
-            st.info("Nenhum campo personalizado configurado ainda")
-        
-        # Opção de salvar template
-        if st.session_state.custom_fields:
-            st.divider()
-            if st.button("💾 Salvar Template de Campos"):
-                template = {
-                    'project_id': st.session_state.project_id,
-                    'fields': st.session_state.custom_fields,
-                    'created_at': datetime.now().isoformat()
-                }
-                
-                # Salvar como JSON para download
-                json_str = pd.json_normalize(template).to_json()
-                st.download_button(
-                    label="📥 Baixar Template",
-                    data=json_str,
-                    file_name=f"template_fields_{st.session_state.project_id}.json",
-                    mime="application/json"
-                )
-
-# Tab 2: Coleta de Dados
-with tab2:
-    st.header("Coleta de Dados")
-    
-    if not st.session_state.custom_fields:
-        st.warning("⚠️ Configure os campos primeiro na aba 'Configurar Campos'")
-        st.stop()
-    
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("Entrada Manual")
-        
-        with st.form("data_entry_form"):
-            # Campos padrão
-            st.write("**Informações Básicas**")
-            record_id = st.text_input("ID do Registro", value=f"REC-{datetime.now().strftime('%Y%m%d%H%M%S')}")
-            collection_date = st.date_input("Data de Coleta", value=datetime.now())
-            collector = st.text_input("Responsável pela Coleta")
-            
-            st.divider()
-            
-            # Campos personalizados
-            st.write("**Dados do Processo**")
-            
-            form_data = {
-                'project_id': st.session_state.project_id,
-                'record_id': record_id,
-                'collection_date': collection_date,
-                'collector': collector
-            }
-            
-            # Renderizar campos personalizados dinamicamente
-            for field in st.session_state.custom_fields:
-                if field['type'] == 'Texto':
-                    value = st.text_input(
-                        field['label'] + (' *' if field['required'] else ''),
-                        help=field['description']
-                    )
-                    
-                elif field['type'] == 'Número Inteiro':
-                    value = st.number_input(
-                        field['label'] + (' *' if field['required'] else ''),
-                        min_value=int(field['config'].get('min', 0)),
-                        max_value=int(field['config'].get('max', 1000000)),
-                        value=int(field['config'].get('min', 0)),
-                        help=field['description']
-                    )
-                    
-                elif field['type'] == 'Número Decimal':
-                    value = st.number_input(
-                        field['label'] + (' *' if field['required'] else ''),
-                        min_value=float(field['config'].get('min', 0.0)),
-                        max_value=float(field['config'].get('max', 1000000.0)),
-                        value=float(field['config'].get('min', 0.0)),
-                        step=float(field['config'].get('step', 0.1)),
-                        help=field['description']
-                    )
-                    
-                elif field['type'] == 'Data':
-                    value = st.date_input(
-                        field['label'] + (' *' if field['required'] else ''),
-                        value=datetime.now(),
-                        help=field['description']
-                    )
-                    
-                elif field['type'] == 'Sim/Não':
-                    value = st.checkbox(
-                        field['label'] + (' *' if field['required'] else ''),
-                        help=field['description']
-                    )
-                    
-                elif field['type'] == 'Lista de Opções':
-                    options = field['config'].get('options', [])
-                    value = st.selectbox(
-                        field['label'] + (' *' if field['required'] else ''),
-                        options=options if options else ['Sem opções configuradas'],
-                        help=field['description']
-                    )
-                
-                form_data[field['name']] = value
-            
-            submitted = st.form_submit_button("➕ Adicionar Registro", type="primary")
-            
-            if submitted:
-                # Validar campos obrigatórios
-                missing_required = []
-                for field in st.session_state.custom_fields:
-                    if field['required'] and not form_data.get(field['name']):
-                        missing_required.append(field['label'])
-                
-                if missing_required:
-                    st.error(f"Campos obrigatórios faltando: {', '.join(missing_required)}")
-                else:
-                    # Converter datas para string
-                    for key, value in form_data.items():
-                        if isinstance(value, (datetime, pd.Timestamp)):
-                            form_data[key] = value.isoformat()
-                    
-                    # Adicionar ao DataFrame
-                    new_df = pd.DataFrame([form_data])
-                    st.session_state.measure_data = pd.concat([st.session_state.measure_data, new_df], ignore_index=True)
-                    
-                    # Salvar no Supabase se disponível
-                    if supabase:
-                        try:
-                            # Preparar dados para o banco
-                            db_data = {
-                                'project_id': st.session_state.project_id,
-                                'cb_id': record_id,
-                                'data_coleta': collection_date.isoformat(),
-                                'data_type': 'measure',
-                                'observacoes': collector
-                            }
-                            
-                            # Adicionar campos personalizados como JSON
-                            custom_data = {k: v for k, v in form_data.items() 
-                                         if k not in ['project_id', 'record_id', 'collection_date', 'collector']}
-                            
-                            # Converter para tipos serializáveis
-                            for key, value in custom_data.items():
-                                if isinstance(value, np.integer):
-                                    custom_data[key] = int(value)
-                                elif isinstance(value, np.floating):
-                                    custom_data[key] = float(value)
-                                elif isinstance(value, (datetime, pd.Timestamp)):
-                                    custom_data[key] = value.isoformat()
-                            
-                            # Salvar campos numéricos diretamente se existirem colunas correspondentes
-                            numeric_fields = ['quantidade', 'defeitos', 'custo', 'tempo_parada_min', 'horas_operacao']
-                            for field in numeric_fields:
-                                if field in custom_data:
-                                    db_data[field] = custom_data[field]
-                            
-                            supabase.table('datasets').insert(db_data).execute()
-                            st.success("✅ Registro salvo no banco de dados!")
-                            
-                        except Exception as e:
-                            st.error(f"Erro ao salvar no banco: {e}")
-                            st.info("Dados salvos apenas localmente")
-                    
-                    st.success("✅ Registro adicionado com sucesso!")
-    
-    with col2:
-        st.subheader("Upload de Dados em Lote")
-        
-        # Gerar template baseado nos campos configurados
-        if st.button("📥 Gerar Template CSV"):
-            # Criar DataFrame de exemplo
-            template_data = {
-                'record_id': [f'REC-{i:04d}' for i in range(1, 6)],
-                'collection_date': [datetime.now().date() for _ in range(5)],
-                'collector': ['Operador 1', 'Operador 2', 'Operador 3', 'Operador 4', 'Operador 5']
-            }
-            
-            # Adicionar campos personalizados
-            for field in st.session_state.custom_fields:
-                if field['type'] == 'Texto':
-                    template_data[field['name']] = [f'Exemplo {i}' for i in range(1, 6)]
-                elif field['type'] in ['Número Inteiro', 'Número Decimal']:
-                    template_data[field['name']] = [field['config'].get('min', 0) for _ in range(5)]
-                elif field['type'] == 'Data':
-                    template_data[field['name']] = [datetime.now().date() for _ in range(5)]
-                elif field['type'] == 'Sim/Não':
-                    template_data[field['name']] = [False, True, False, True, False]
-                elif field['type'] == 'Lista de Opções':
-                    options = field['config'].get('options', ['Opção 1'])
-                    template_data[field['name']] = [options[0] if options else '' for _ in range(5)]
-            
-            template_df = pd.DataFrame(template_data)
-            
-            csv = template_df.to_csv(index=False)
-            st.download_button(
-                label="📄 Download Template CSV",
-                data=csv,
-                file_name=f"template_measure_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-            
-            # Mostrar instruções
-            with st.expander("📝 Instruções para preenchimento"):
-                st.write("**Formato dos dados:**")
-                for field in st.session_state.custom_fields:
-                    st.write(f"• **{field['label']}** ({field['name']}): {field['type']}")
-                    if field['description']:
-                        st.write(f"  → {field['description']}")
-                    if field['type'] == 'Lista de Opções' and field['config'].get('options'):
-                        st.write(f"  → Opções válidas: {', '.join(field['config']['options'])}")
-        
-        st.divider()
-        
-        # Upload de arquivo
-        uploaded_file = st.file_uploader("Upload CSV com dados", type=['csv', 'xlsx'])
-        
-        if uploaded_file:
-            try:
-                # Ler arquivo
-                if uploaded_file.name.endswith('.csv'):
-                    df_upload = pd.read_csv(uploaded_file)
-                else:
-                    df_upload = pd.read_excel(uploaded_file)
-                
-                st.write("**Preview dos dados:**")
-                st.dataframe(df_upload.head())
-                
-                # Informações do arquivo
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Linhas", len(df_upload))
-                with col2:
-                    st.metric("Colunas", len(df_upload.columns))
-                with col3:
-                    colunas_validas = sum(1 for field in st.session_state.custom_fields 
-                                         if field['name'] in df_upload.columns)
-                    st.metric("Campos Reconhecidos", f"{colunas_validas}/{len(st.session_state.custom_fields)}")
-                
-                if st.button("✅ Importar Dados", type="primary"):
-                    # Adicionar project_id
-                    df_upload['project_id'] = st.session_state.project_id
-                    
-                    # Adicionar ao DataFrame local
-                    st.session_state.measure_data = pd.concat([st.session_state.measure_data, df_upload], ignore_index=True)
-                    
-                    # Tentar salvar no Supabase
-                    if supabase:
-                        success_count = 0
-                        error_count = 0
-                        
-                        for _, row in df_upload.iterrows():
-                            try:
-                                # Preparar dados básicos
-                                db_data = {
-                                    'project_id': st.session_state.project_id,
-                                    'cb_id': row.get('record_id', f'IMP-{datetime.now().strftime("%Y%m%d%H%M%S")}'),
-                                    'data_coleta': pd.to_datetime(row.get('collection_date', datetime.now())).date().isoformat(),
-                                    'data_type': 'measure'
-                                }
-                                
-                                # Adicionar campos que existem na tabela
-                                for col in ['quantidade', 'defeitos', 'custo', 'tempo_parada_min', 'horas_operacao']:
-                                    if col in row:
-                                        db_data[col] = float(row[col]) if pd.notna(row[col]) else 0
-                                
-                                supabase.table('datasets').insert(db_data).execute()
-                                success_count += 1
-                                
-                            except Exception as e:
-                                error_count += 1
-                        
-                        if success_count > 0:
-                            st.success(f"✅ {success_count} registros salvos no banco")
-                        if error_count > 0:
-                            st.warning(f"⚠️ {error_count} registros com erro")
-                    
-                    st.success(f"✅ {len(df_upload)} registros importados!")
-                    
-            except Exception as e:
-                st.error(f"Erro ao processar arquivo: {e}")
-
-# Tab 3: Análise Exploratória
-with tab3:
-    st.header("Análise Exploratória de Dados")
-    
-    # Carregar todos os dados disponíveis
-    all_data = st.session_state.measure_data
-    
-    # Tentar carregar do Supabase também
-    if supabase and len(all_data) == 0:
-        try:
-            response = supabase.table('datasets').select("*").eq('project_id', st.session_state.project_id).execute()
-            if response.data:
-                all_data = pd.DataFrame(response.data)
-        except:
-            pass
-    
-    if not all_data.empty:
-        st.success(f"✅ {len(all_data)} registros disponíveis para análise")
-        
-        # Identificar colunas numéricas e categóricas
-        numeric_cols = all_data.select_dtypes(include=[np.number]).columns.tolist()
-        categorical_cols = all_data.select_dtypes(include=['object']).columns.tolist()
-        
-        # Remover colunas de sistema
-        system_cols = ['id', 'project_id', 'created_at', 'updated_at']
-        numeric_cols = [col for col in numeric_cols if col not in system_cols]
-        categorical_cols = [col for col in categorical_cols if col not in system_cols]
-        
-        # Análise univariada
-        st.subheader("📊 Análise Univariada")
-        
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([2, 1])
         
         with col1:
-            if numeric_cols:
-                selected_numeric = st.selectbox("Selecione variável numérica:", numeric_cols)
-                
-                if selected_numeric:
-                    fig = px.histogram(
-                        all_data,
-                        x=selected_numeric,
-                        title=f'Distribuição de {selected_numeric}',
-                        nbins=20
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+            uploaded_file = st.file_uploader(
+                "Escolha um arquivo CSV ou Excel",
+                type=['csv', 'xlsx', 'xls'],
+                help="O sistema detectará automaticamente as colunas do seu arquivo"
+            )
+            
+            if uploaded_file is not None:
+                try:
+                    # Ler arquivo
+                    if uploaded_file.name.endswith('.csv'):
+                        # Tentar diferentes encodings
+                        encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
+                        df = None
+                        for encoding in encodings:
+                            try:
+                                uploaded_file.seek(0)
+                                df = pd.read_csv(uploaded_file, encoding=encoding)
+                                st.success(f"✅ Arquivo lido com sucesso (encoding: {encoding})")
+                                break
+                            except:
+                                continue
+                        
+                        if df is None:
+                            uploaded_file.seek(0)
+                            df = pd.read_csv(uploaded_file, encoding='utf-8', errors='ignore')
+                    else:
+                        df = pd.read_excel(uploaded_file)
                     
-                    # Estatísticas básicas
-                    st.write("**Estatísticas:**")
-                    stats_df = pd.DataFrame({
-                        'Média': [all_data[selected_numeric].mean()],
-                        'Mediana': [all_data[selected_numeric].median()],
-                        'Desvio': [all_data[selected_numeric].std()],
-                        'Min': [all_data[selected_numeric].min()],
-                        'Max': [all_data[selected_numeric].max()]
-                    }).T
-                    stats_df.columns = ['Valor']
-                    st.dataframe(stats_df)
+                    st.session_state.uploaded_data = df
+                    st.session_state.data_columns = df.columns.tolist()
+                    
+                    # Mostrar preview
+                    st.success(f"✅ Arquivo carregado com sucesso! {len(df)} linhas e {len(df.columns)} colunas")
+                    
+                    # Informações do arquivo
+                    col1_1, col2_1, col3_1, col4_1 = st.columns(4)
+                    with col1_1:
+                        st.metric("Total de Linhas", len(df))
+                    with col2_1:
+                        st.metric("Total de Colunas", len(df.columns))
+                    with col3_1:
+                        missing = df.isnull().sum().sum()
+                        st.metric("Valores Faltantes", missing)
+                    with col4_1:
+                        memory = df.memory_usage(deep=True).sum() / 1024 / 1024
+                        st.metric("Tamanho", f"{memory:.2f} MB")
+                    
+                    # Preview dos dados
+                    st.subheader("Preview dos Dados")
+                    
+                    # Opção de visualização
+                    view_option = st.radio(
+                        "Visualizar:",
+                        ["Primeiras linhas", "Últimas linhas", "Amostra aleatória", "Dados completos"],
+                        horizontal=True
+                    )
+                    
+                    if view_option == "Primeiras linhas":
+                        n_rows = st.slider("Número de linhas", 5, 50, 10)
+                        st.dataframe(df.head(n_rows), use_container_width=True)
+                    elif view_option == "Últimas linhas":
+                        n_rows = st.slider("Número de linhas", 5, 50, 10)
+                        st.dataframe(df.tail(n_rows), use_container_width=True)
+                    elif view_option == "Amostra aleatória":
+                        n_rows = st.slider("Número de linhas", 5, 50, 10)
+                        st.dataframe(df.sample(min(n_rows, len(df))), use_container_width=True)
+                    else:
+                        st.dataframe(df, use_container_width=True)
+                    
+                except Exception as e:
+                    st.error(f"Erro ao ler arquivo: {e}")
         
         with col2:
-            if categorical_cols:
-                selected_categorical = st.selectbox("Selecione variável categórica:", categorical_cols)
+            if st.session_state.uploaded_data is not None:
+                st.subheader("Colunas Detectadas")
                 
-                if selected_categorical:
-                    value_counts = all_data[selected_categorical].value_counts()
+                df = st.session_state.uploaded_data
+                
+                # Análise automática de tipos
+                st.write("**Análise Automática dos Tipos:**")
+                
+                column_info = []
+                for col in df.columns:
+                    # Detectar tipo
+                    if df[col].dtype in ['int64', 'float64']:
+                        tipo = "Numérico"
+                        icon = "🔢"
+                    elif df[col].dtype == 'object':
+                        # Verificar se é data
+                        try:
+                            pd.to_datetime(df[col], errors='coerce')
+                            if df[col].str.match(r'\d{4}-\d{2}-\d{2}').any():
+                                tipo = "Data"
+                                icon = "📅"
+                            else:
+                                tipo = "Texto"
+                                icon = "📝"
+                        except:
+                            tipo = "Texto"
+                            icon = "📝"
+                    elif df[col].dtype == 'bool':
+                        tipo = "Booleano"
+                        icon = "✓✗"
+                    elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                        tipo = "Data/Hora"
+                        icon = "📅"
+                    else:
+                        tipo = "Outro"
+                        icon = "❓"
                     
-                    fig = px.pie(
-                        values=value_counts.values,
-                        names=value_counts.index,
-                        title=f'Distribuição de {selected_categorical}'
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-        
-        # Análise bivariada
-        if len(numeric_cols) >= 2:
-            st.subheader("📈 Análise Bivariada")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                x_var = st.selectbox("Variável X:", numeric_cols, key="x_var")
-            with col2:
-                y_var = st.selectbox("Variável Y:", numeric_cols, key="y_var")
-            
-            if x_var and y_var and x_var != y_var:
-                fig = px.scatter(
-                    all_data,
-                    x=x_var,
-                    y=y_var,
-                    title=f'{y_var} vs {x_var}',
-                    trendline="ols"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Análise temporal se houver data
-        date_cols = [col for col in all_data.columns if 'data' in col.lower() or 'date' in col.lower()]
-        
-        if date_cols and numeric_cols:
-            st.subheader("📅 Análise Temporal")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                date_col = st.selectbox("Coluna de data:", date_cols)
-            with col2:
-                metric_col = st.selectbox("Métrica:", numeric_cols, key="metric_temporal")
-            
-            if date_col and metric_col:
-                # Converter para datetime
-                all_data[date_col] = pd.to_datetime(all_data[date_col], errors='coerce')
-                
-                # Filtrar dados válidos
-                temporal_data = all_data[[date_col, metric_col]].dropna()
-                
-                if not temporal_data.empty:
-                    temporal_data = temporal_data.sort_values(date_col)
+                    # Estatísticas básicas
+                    non_null = df[col].notna().sum()
+                    null_count = df[col].isna().sum()
+                    unique = df[col].nunique()
                     
-                    fig = px.line(
-                        temporal_data,
-                        x=date_col,
-                        y=metric_col,
-                        title=f'Evolução de {metric_col}',
-                        markers=True
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Nenhum dado disponível. Colete dados na aba 'Coleta de Dados'")
-
-# Tab 4: Estatísticas
-with tab4:
-    st.header("Análise Estatística")
+                    column_info.append({
+                        'Coluna': f"{icon} {col}",
+                        'Tipo': tipo,
+                        'Não-Nulos': non_null,
+                        'Nulos': null_count,
+                        'Únicos': unique
+                    })
+                
+                info_df = pd.DataFrame(column_info)
+                st.dataframe(info_df, use_container_width=True, hide_index=True)
     
-    if not st.session_state.measure_data.empty or (supabase and st.session_state.project_id):
-        # Carregar dados
-        if not st.session_state.measure_data.empty:
-            df = st.session_state.measure_data
-        else:
-            try:
-                response = supabase.table('datasets').select("*").eq('project_id', st.session_state.project_id).execute()
-                df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
-            except:
-                df = pd.DataFrame()
+    # Configuração de colunas
+    if st.session_state.uploaded_data is not None:
+        st.divider()
+        st.subheader("⚙️ Configuração das Colunas")
         
-        if not df.empty:
-            # Selecionar variável
-            numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
-            system_cols = ['id', 'project_id', 'created_at', 'updated_at']
-            numeric_columns = [col for col in numeric_columns if col not in system_cols]
+        df = st.session_state.uploaded_data
+        
+        with st.expander("Configurar tipos e papéis das colunas", expanded=True):
+            col1, col2, col3 = st.columns(3)
             
-            if numeric_columns:
-                selected_var = st.selectbox("Selecione a variável para análise:", numeric_columns)
+            # Configuração de colunas especiais
+            with col1:
+                st.write("**Identificação:**")
                 
-                if selected_var:
-                    data = df[selected_var].dropna()
-                    
-                    if len(data) > 0:
-                        col1, col2 = st.columns([1, 2])
+                date_columns = [col for col in df.columns if 'data' in col.lower() or 'date' in col.lower()]
+                date_col = st.selectbox(
+                    "Coluna de Data",
+                    options=['Nenhuma'] + df.columns.tolist(),
+                    index=1 if date_columns else 0,
+                    help="Selecione a coluna que contém as datas"
+                )
+                
+                id_col = st.selectbox(
+                    "Coluna de ID/Código",
+                    options=['Nenhuma'] + df.columns.tolist(),
+                    help="Coluna com identificador único"
+                )
+            
+            with col2:
+                st.write("**Categorização:**")
+                
+                text_columns = df.select_dtypes(include=['object']).columns.tolist()
+                
+                category_cols = st.multiselect(
+                    "Colunas Categóricas",
+                    options=text_columns,
+                    help="Colunas para agrupamento e filtros"
+                )
+                
+                group_col = st.selectbox(
+                    "Coluna de Agrupamento Principal",
+                    options=['Nenhuma'] + text_columns,
+                    help="Coluna principal para análises agrupadas"
+                )
+            
+            with col3:
+                st.write("**Medições:**")
+                
+                numeric_columns = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+                
+                metric_cols = st.multiselect(
+                    "Colunas de Métricas",
+                    options=numeric_columns,
+                    default=numeric_columns[:5] if len(numeric_columns) > 5 else numeric_columns,
+                    help="Colunas numéricas para análise"
+                )
+                
+                target_col = st.selectbox(
+                    "Variável Principal (Y)",
+                    options=['Nenhuma'] + numeric_columns,
+                    help="Variável principal do estudo"
+                )
+        
+        # Transformações básicas
+        with st.expander("🔄 Transformações de Dados (Opcional)"):
+            st.write("**Aplicar transformações aos dados:**")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Tratamento de valores faltantes
+                st.write("**Valores Faltantes:**")
+                missing_strategy = st.selectbox(
+                    "Estratégia para valores faltantes",
+                    ["Manter como está", "Remover linhas", "Preencher com média", 
+                     "Preencher com mediana", "Preencher com zero", "Preencher com anterior"]
+                )
+                
+                if missing_strategy != "Manter como está":
+                    if st.button("Aplicar tratamento"):
+                        if missing_strategy == "Remover linhas":
+                            df = df.dropna()
+                        elif missing_strategy == "Preencher com média":
+                            df = df.fillna(df.mean())
+                        elif missing_strategy == "Preencher com mediana":
+                            df = df.fillna(df.median())
+                        elif missing_strategy == "Preencher com zero":
+                            df = df.fillna(0)
+                        elif missing_strategy == "Preencher com anterior":
+                            df = df.fillna(method='ffill')
                         
-                        with col1:
-                            st.subheader("Estatísticas Descritivas")
-                            
-                            # Estatísticas completas
-                            stats = {
-                                'N (amostras)': len(data),
-                                'Média': data.mean(),
-                                'Erro Padrão': data.sem(),
-                                'Mediana': data.median(),
-                                'Moda': data.mode()[0] if not data.mode().empty else np.nan,
-                                'Desvio Padrão': data.std(),
-                                'Variância': data.var(),
-                                'Curtose': data.kurtosis(),
-                                'Assimetria': data.skew(),
-                                'Amplitude': data.max() - data.min(),
-                                'Mínimo': data.min(),
-                                'Q1 (25%)': data.quantile(0.25),
-                                'Q2 (50%)': data.quantile(0.50),
-                                'Q3 (75%)': data.quantile(0.75),
-                                'Máximo': data.max(),
-                                'IQR': data.quantile(0.75) - data.quantile(0.25),
-                                'CV (%)': (data.std() / data.mean() * 100) if data.mean() != 0 else 0
+                        st.session_state.uploaded_data = df
+                        st.success(f"✅ Tratamento aplicado: {missing_strategy}")
+                        st.rerun()
+            
+            with col2:
+                # Filtros
+                st.write("**Filtros:**")
+                
+                if date_col != 'Nenhuma' and date_col in df.columns:
+                    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+                    
+                    date_range = st.date_input(
+                        "Filtrar por período",
+                        value=(df[date_col].min(), df[date_col].max()),
+                        key="date_filter"
+                    )
+                    
+                    if st.button("Aplicar filtro de data"):
+                        mask = (df[date_col] >= pd.to_datetime(date_range[0])) & \
+                               (df[date_col] <= pd.to_datetime(date_range[1]))
+                        df = df[mask]
+                        st.session_state.uploaded_data = df
+                        st.success(f"✅ Filtro aplicado: {len(df)} linhas mantidas")
+                        st.rerun()
+        
+        # Salvar dados no banco
+        st.divider()
+        st.subheader("💾 Salvar Dados no Projeto")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            data_description = st.text_area(
+                "Descrição dos dados",
+                placeholder="Descreva brevemente o que estes dados representam",
+                help="Esta descrição ajudará a identificar os dados posteriormente"
+            )
+            
+            data_source = st.text_input(
+                "Fonte dos dados",
+                placeholder="Ex: Sistema ERP, Planilha de controle, Sensor IoT"
+            )
+            
+            collection_period = st.text_input(
+                "Período de coleta",
+                placeholder="Ex: Janeiro 2024 - Março 2024"
+            )
+        
+        with col2:
+            st.write("**Resumo para salvar:**")
+            st.metric("Registros", len(df))
+            st.metric("Colunas", len(df.columns))
+            st.metric("Tamanho", f"{df.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB")
+        
+        if st.button("💾 Salvar Dados no Banco", type="primary"):
+            try:
+                # Preparar configuração
+                config_data = {
+                    'project_id': st.session_state.current_project_id,
+                    'data_collection_plan': {
+                        'description': data_description,
+                        'source': data_source,
+                        'period': collection_period,
+                        'columns': df.columns.tolist(),
+                        'shape': {'rows': len(df), 'columns': len(df.columns)},
+                        'date_column': date_col if date_col != 'Nenhuma' else None,
+                        'id_column': id_col if id_col != 'Nenhuma' else None,
+                        'category_columns': category_cols,
+                        'metric_columns': metric_cols,
+                        'target_column': target_col if target_col != 'Nenhuma' else None
+                    }
+                }
+                
+                # Salvar configuração
+                if existing_config:
+                    supabase.table('measure_config').update(config_data).eq('project_id', st.session_state.current_project_id).execute()
+                else:
+                    supabase.table('measure_config').insert(config_data).execute()
+                
+                # Salvar dados em lote
+                success_count = 0
+                error_count = 0
+                batch_size = 100  # Inserir em lotes de 100
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i in range(0, len(df), batch_size):
+                    batch = df.iloc[i:i+batch_size]
+                    
+                    for _, row in batch.iterrows():
+                        try:
+                            # Preparar dados para inserção
+                            measurement_data = {
+                                'project_id': st.session_state.current_project_id,
+                                'measurement_date': datetime.now().date().isoformat(),
+                                'metrics': row.to_dict(),  # Salvar todos os dados como JSON
+                                'data_source': data_source
                             }
                             
-                            # Criar DataFrame para exibição
-                            stats_df = pd.DataFrame.from_dict(stats, orient='index', columns=['Valor'])
-                            stats_df['Valor'] = stats_df['Valor'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                            # Adicionar campos especiais se configurados
+                            if date_col != 'Nenhuma' and date_col in row:
+                                measurement_data['measurement_date'] = pd.to_datetime(row[date_col]).date().isoformat()
                             
-                            st.dataframe(stats_df, use_container_width=True)
+                            if group_col != 'Nenhuma' and group_col in row:
+                                measurement_data['category'] = str(row[group_col])
                             
-                            # Salvar estatísticas
-                            if st.button("💾 Salvar Análise Estatística"):
-                                if supabase:
-                                    try:
-                                        # Preparar dados para salvar
-                                        stats_record = {
-                                            'project_id': st.session_state.project_id,
-                                            'variavel': selected_var,
-                                            'media': float(data.mean()),
-                                            'mediana': float(data.median()),
-                                            'desvio_padrao': float(data.std()),
-                                            'minimo': float(data.min()),
-                                            'maximo': float(data.max()),
-                                            'q1': float(data.quantile(0.25)),
-                                            'q3': float(data.quantile(0.75)),
-                                            'cv': float((data.std() / data.mean() * 100)) if data.mean() != 0 else 0,
-                                            'periodo_analise': 'measure_phase'
-                                        }
-                                        
-                                        supabase.table('measure_statistics').insert(stats_record).execute()
-                                        st.success("✅ Análise salva com sucesso!")
-                                    except Exception as e:
-                                        st.error(f"Erro ao salvar: {e}")
-                        
-                        with col2:
-                            st.subheader("Visualizações")
+                            supabase.table('measurements').insert(measurement_data).execute()
+                            success_count += 1
                             
-                            # Tabs para diferentes visualizações
-                            viz_tab1, viz_tab2, viz_tab3 = st.tabs(["Distribuição", "Boxplot", "Q-Q Plot"])
+                        except Exception as e:
+                            error_count += 1
+                    
+                    # Atualizar progresso
+                    progress = (i + batch_size) / len(df)
+                    progress_bar.progress(min(progress, 1.0))
+                    status_text.text(f"Salvando: {min(i + batch_size, len(df))}/{len(df)} registros")
+                
+                progress_bar.empty()
+                status_text.empty()
+                
+                if success_count > 0:
+                    st.success(f"✅ {success_count} registros salvos com sucesso!")
+                if error_count > 0:
+                    st.warning(f"⚠️ {error_count} registros com erro")
+                
+                # Atualizar fase do projeto
+                supabase.table('projects').update({
+                    'current_phase': 'Measure',
+                    'progress_percentage': 40
+                }).eq('id', st.session_state.current_project_id).execute()
+                
+            except Exception as e:
+                st.error(f"Erro ao salvar: {e}")
+    
+    elif "📝 Entrada manual" in data_input_method:
+        st.subheader("Entrada Manual de Dados")
+        
+        # Verificar se há configuração salva
+        if existing_config and 'data_collection_plan' in existing_config:
+            plan = existing_config['data_collection_plan']
+            if 'columns' in plan:
+                st.info(f"Usando estrutura salva: {len(plan['columns'])} colunas")
+                
+                # Criar formulário baseado nas colunas salvas
+                with st.form("manual_entry_form"):
+                    st.write("**Preencha os dados:**")
+                    
+                    form_data = {}
+                    
+                    # Criar campos dinamicamente
+                    cols = st.columns(3)
+                    for i, col_name in enumerate(plan['columns']):
+                        with cols[i % 3]:
+                            # Determinar tipo de input baseado no nome/tipo
+                            if 'date' in col_name.lower() or 'data' in col_name.lower():
+                                form_data[col_name] = st.date_input(col_name)
+                            elif col_name in plan.get('metric_columns', []):
+                                form_data[col_name] = st.number_input(col_name, step=0.01)
+                            elif col_name in plan.get('category_columns', []):
+                                form_data[col_name] = st.text_input(col_name)
+                            else:
+                                form_data[col_name] = st.text_input(col_name)
+                    
+                    submitted = st.form_submit_button("Adicionar Registro")
+                    
+                    if submitted:
+                        try:
+                            # Salvar no banco
+                            measurement_data = {
+                                'project_id': st.session_state.current_project_id,
+                                'measurement_date': datetime.now().date().isoformat(),
+                                'metrics': form_data,
+                                'data_source': 'Manual Entry'
+                            }
                             
-                            with viz_tab1:
-                                # Histograma com curva normal
-                                fig = go.Figure()
-                                
-                                # Histograma
-                                fig.add_trace(go.Histogram(
-                                    x=data,
-                                    name='Frequência',
-                                    nbinsx=30,
-                                    histnorm='probability density',
-                                    marker_color='lightblue'
-                                ))
-                                
-                                # Curva normal
-                                x_range = np.linspace(data.min(), data.max(), 100)
-                                normal_curve = stats.norm.pdf(x_range, data.mean(), data.std())
-                                
-                                fig.add_trace(go.Scatter(
-                                    x=x_range,
-                                    y=normal_curve,
-                                    mode='lines',
-                                    name='Curva Normal',
-                                    line=dict(color='red', width=2)
-                                ))
-                                
-                                fig.update_layout(
-                                    title=f'Distribuição de {selected_var}',
-                                    xaxis_title=selected_var,
-                                    yaxis_title='Densidade',
-                                    height=400
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
+                            supabase.table('measurements').insert(measurement_data).execute()
+                            st.success("✅ Registro adicionado com sucesso!")
                             
-                            with viz_tab2:
-                                # Boxplot
-                                fig = go.Figure()
-                                fig.add_trace(go.Box(
-                                    y=data,
-                                    name=selected_var,
-                                    boxmean='sd',
-                                    marker_color='lightgreen'
-                                ))
-                                
-                                fig.update_layout(
-                                    title=f'Boxplot de {selected_var}',
-                                    yaxis_title=selected_var,
-                                    height=400
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
-                            
-                            with viz_tab3:
-                                # Q-Q Plot
-                                if len(data) >= 3:
-                                    fig = go.Figure()
-                                    
-                                    # Calcular quantis
-                                    theoretical_quantiles = stats.probplot(data, dist="norm")[0][0]
-                                    sample_quantiles = stats.probplot(data, dist="norm")[0][1]
-                                    
-                                    # Pontos
-                                    fig.add_trace(go.Scatter(
-                                        x=theoretical_quantiles,
-                                        y=sample_quantiles,
-                                        mode='markers',
-                                        name='Dados',
-                                        marker=dict(size=8, color='blue')
-                                    ))
-                                    
-                                    # Linha de referência
-                                    min_val = min(theoretical_quantiles.min(), sample_quantiles.min())
-                                    max_val = max(theoretical_quantiles.max(), sample_quantiles.max())
-                                    
-                                    fig.add_trace(go.Scatter(
-                                        x=[min_val, max_val],
-                                        y=[min_val, max_val],
-                                        mode='lines',
-                                        name='Normal Teórica',
-                                        line=dict(color='red', dash='dash')
-                                    ))
-                                    
-                                    fig.update_layout(
-                                        title='Q-Q Plot (Normalidade)',
-                                        xaxis_title='Quantis Teóricos',
-                                        yaxis_title='Quantis da Amostra',
-                                        height=400
-                                    )
-                                    
-                                    st.plotly_chart(fig, use_container_width=True)
-                                    
-                                    # Teste de normalidade
-                                    st.subheader("Teste de Normalidade")
-                                    
-                                    # Shapiro-Wilk
-                                    stat_sw, p_sw = stats.shapiro(data)
-                                    
-                                    # Anderson-Darling
-                                    result_ad = stats.anderson(data)
-                                    
-                                    col1, col2 = st.columns(2)
-                                    
-                                    with col1:
-                                        st.write("**Teste Shapiro-Wilk**")
-                                        st.write(f"Estatística: {stat_sw:.6f}")
-                                        st.write(f"P-valor: {p_sw:.6f}")
-                                        
-                                        if p_sw > 0.05:
-                                            st.success("✅ Distribuição normal (p > 0.05)")
-                                        else:
-                                            st.warning("⚠️ Distribuição não normal (p ≤ 0.05)")
-                                    
-                                    with col2:
-                                        st.write("**Teste Anderson-Darling**")
-                                        st.write(f"Estatística: {result_ad.statistic:.6f}")
-                                        st.write("Valores críticos:")
-                                        for i, (sig, crit) in enumerate(zip(result_ad.significance_level, result_ad.critical_values)):
-                                            st.write(f"  {sig}%: {crit:.3f}")
-                    else:
-                        st.warning("Dados insuficientes para análise")
-            else:
-                st.info("Nenhuma variável numérica disponível para análise")
+                        except Exception as e:
+                            st.error(f"Erro ao salvar: {e}")
         else:
-            st.info("Nenhum dado disponível para análise")
+            st.warning("Configure primeiro a estrutura dos dados fazendo upload de um arquivo exemplo.")
+    
+    else:  # Usar dados salvos
+        st.subheader("Dados Salvos do Projeto")
+        
+        try:
+            # Carregar dados salvos
+            measurements = supabase.table('measurements').select("*").eq('project_id', st.session_state.current_project_id).execute()
+            
+            if measurements.data:
+                st.success(f"✅ {len(measurements.data)} registros encontrados")
+                
+                # Converter para DataFrame
+                data_list = []
+                for m in measurements.data:
+                    if 'metrics' in m and m['metrics']:
+                        record = m['metrics']
+                        record['_measurement_date'] = m.get('measurement_date')
+                        record['_id'] = m.get('id')
+                        data_list.append(record)
+                
+                if data_list:
+                    df = pd.DataFrame(data_list)
+                    st.session_state.uploaded_data = df
+                    
+                    # Preview
+                    st.dataframe(df.head(10), use_container_width=True)
+                else:
+                    st.warning("Dados salvos não contêm métricas")
+            else:
+                st.info("Nenhum dado salvo encontrado para este projeto")
+                
+        except Exception as e:
+            st.error(f"Erro ao carregar dados: {e}")
+
+# Tab 2: Visualização
+with tab2:
+    st.header("Visualização dos Dados")
+    
+    if st.session_state.uploaded_data is not None:
+        df = st.session_state.uploaded_data
+        
+        # Identificar colunas numéricas e categóricas
+        numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+        categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+        
+        # Tipo de gráfico
+        chart_type = st.selectbox(
+            "Tipo de Visualização",
+            ["Histograma", "Boxplot", "Scatter", "Linha", "Barras", "Pizza", "Heatmap", "Pareto"]
+        )
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col2:
+            st.write("**Configuração do Gráfico:**")
+            
+            if chart_type == "Histograma":
+                x_col = st.selectbox("Variável", numeric_cols)
+                bins = st.slider("Número de bins", 10, 100, 30)
+                
+                if st.button("Gerar Gráfico"):
+                    fig = px.histogram(df, x=x_col, nbins=bins, title=f"Histograma de {x_col}")
+                    col1.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Boxplot":
+                y_col = st.selectbox("Variável", numeric_cols)
+                x_col = st.selectbox("Agrupar por (opcional)", ['Nenhum'] + categorical_cols)
+                
+                if st.button("Gerar Gráfico"):
+                    if x_col == 'Nenhum':
+                        fig = px.box(df, y=y_col, title=f"Boxplot de {y_col}")
+                    else:
+                        fig = px.box(df, x=x_col, y=y_col, title=f"Boxplot de {y_col} por {x_col}")
+                    col1.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Scatter":
+                x_col = st.selectbox("Eixo X", numeric_cols)
+                y_col = st.selectbox("Eixo Y", numeric_cols)
+                color_col = st.selectbox("Cor (opcional)", ['Nenhum'] + categorical_cols)
+                size_col = st.selectbox("Tamanho (opcional)", ['Nenhum'] + numeric_cols)
+                
+                if st.button("Gerar Gráfico"):
+                    fig_params = {'x': x_col, 'y': y_col, 'title': f"{y_col} vs {x_col}"}
+                    if color_col != 'Nenhum':
+                        fig_params['color'] = color_col
+                    if size_col != 'Nenhum':
+                        fig_params['size'] = size_col
+                    
+                    fig = px.scatter(df, **fig_params, trendline="ols")
+                    col1.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Linha":
+                # Tentar identificar coluna de tempo
+                time_cols = [col for col in df.columns if 'date' in col.lower() or 'data' in col.lower() or 'time' in col.lower()]
+                
+                if time_cols:
+                    x_col = st.selectbox("Eixo X (tempo)", time_cols)
+                else:
+                    x_col = st.selectbox("Eixo X", df.columns.tolist())
+                
+                y_cols = st.multiselect("Variáveis Y", numeric_cols)
+                
+                if st.button("Gerar Gráfico"):
+                    if y_cols:
+                        fig = go.Figure()
+                        for y_col in y_cols:
+                            fig.add_trace(go.Scatter(x=df[x_col], y=df[y_col], mode='lines+markers', name=y_col))
+                        fig.update_layout(title="Gráfico de Linha", xaxis_title=x_col, yaxis_title="Valor")
+                        col1.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Barras":
+                x_col = st.selectbox("Categoria", categorical_cols) if categorical_cols else None
+                y_col = st.selectbox("Valor", numeric_cols) if numeric_cols else None
+                agg_func = st.selectbox("Agregação", ["sum", "mean", "count", "max", "min"])
+                
+                if st.button("Gerar Gráfico") and x_col and y_col:
+                    agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                    fig = px.bar(agg_data, x=x_col, y=y_col, title=f"{agg_func} de {y_col} por {x_col}")
+                    col1.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Pizza":
+                cat_col = st.selectbox("Categoria", categorical_cols) if categorical_cols else None
+                
+                if st.button("Gerar Gráfico") and cat_col:
+                    value_counts = df[cat_col].value_counts()
+                    fig = px.pie(values=value_counts.values, names=value_counts.index, title=f"Distribuição de {cat_col}")
+                    col1.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Heatmap":
+                if st.button("Gerar Gráfico"):
+                    corr_matrix = df[numeric_cols].corr()
+                    fig = px.imshow(corr_matrix, text_auto=True, title="Matriz de Correlação")
+                    col1.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "Pareto":
+                cat_col = st.selectbox("Categoria", categorical_cols) if categorical_cols else None
+                val_col = st.selectbox("Valor", numeric_cols) if numeric_cols else None
+                
+                if st.button("Gerar Gráfico") and cat_col and val_col:
+                    # Agregar dados
+                    pareto_data = df.groupby(cat_col)[val_col].sum().sort_values(ascending=False)
+                    
+                    # Calcular percentual acumulado
+                    cumsum = pareto_data.cumsum()
+                    cumperc = 100 * cumsum / pareto_data.sum()
+                    
+                    # Criar gráfico
+                    fig = go.Figure()
+                    
+                    fig.add_trace(go.Bar(
+                        x=pareto_data.index,
+                        y=pareto_data.values,
+                        name='Frequência',
+                        yaxis='y'
+                    ))
+                    
+                    fig.add_trace(go.Scatter(
+                        x=pareto_data.index,
+                        y=cumperc.values,
+                        name='% Acumulado',
+                        yaxis='y2',
+                        mode='lines+markers',
+                        marker=dict(color='red')
+                    ))
+                    
+                    fig.update_layout(
+                        title=f'Diagrama de Pareto - {cat_col}',
+                        yaxis=dict(title=val_col),
+                        yaxis2=dict(title='% Acumulado', overlaying='y', side='right', range=[0, 105]),
+                        xaxis=dict(tickangle=45)
+                    )
+                    
+                    col1.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Carregue dados primeiro na aba 'Coleta de Dados'")
+        st.info("Carregue dados na aba 'Upload de Dados' para visualizar")
+
+# Tab 3: Estatísticas
+with tab3:
+    st.header("Análise Estatística")
+    
+    if st.session_state.uploaded_data is not None:
+        df = st.session_state.uploaded_data
+        numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+        
+        if numeric_cols:
+            selected_cols = st.multiselect(
+                "Selecione as variáveis para análise:",
+                numeric_cols,
+                default=numeric_cols[:5] if len(numeric_cols) > 5 else numeric_cols
+            )
+            
+            if selected_cols:
+                # Estatísticas descritivas
+                st.subheader("Estatísticas Descritivas")
+                stats_df = df[selected_cols].describe().T
+                stats_df['CV%'] = (df[selected_cols].std() / df[selected_cols].mean() * 100).round(2)
+                stats_df['IQR'] = df[selected_cols].quantile(0.75) - df[selected_cols].quantile(0.25)
+                
+                st.dataframe(stats_df, use_container_width=True)
+                
+                # Download das estatísticas
+                csv = stats_df.to_csv()
+                st.download_button(
+                    label="📥 Download Estatísticas (CSV)",
+                    data=csv,
+                    file_name=f"estatisticas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+                
+                # Teste de normalidade
+                st.subheader("Teste de Normalidade (Shapiro-Wilk)")
+                
+                normality_results = []
+                for col in selected_cols:
+                    data = df[col].dropna()
+                    if len(data) >= 3:
+                        stat, p_value = stats.shapiro(data)
+                        normality_results.append({
+                            'Variável': col,
+                            'Estatística W': round(stat, 6),
+                            'P-valor': round(p_value, 6),
+                            'Normal (α=0.05)': '✅ Sim' if p_value > 0.05 else '❌ Não'
+                        })
+                
+                if normality_results:
+                    norm_df = pd.DataFrame(normality_results)
+                    st.dataframe(norm_df, use_container_width=True, hide_index=True)
+        else:
+            st.warning("Nenhuma coluna numérica encontrada nos dados")
+    else:
+        st.info("Carregue dados na aba 'Upload de Dados' para análise estatística")
+
+# Tab 4: Capacidade do Processo
+with tab4:
+    st.header("Análise de Capacidade do Processo")
+    
+    if st.session_state.uploaded_data is not None:
+        df = st.session_state.uploaded_data
+        numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+        
+        if numeric_cols:
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.subheader("Configuração")
+                
+                process_var = st.selectbox("Variável do Processo", numeric_cols)
+                
+                st.write("**Limites de Especificação:**")
+                
+                lsl = st.number_input("LSL (Lower Spec Limit)", value=None)
+                usl = st.number_input("USL (Upper Spec Limit)", value=None)
+                target = st.number_input("Target (Alvo)", value=None)
+                
+                if st.button("Calcular Capacidade", type="primary"):
+                    if lsl is not None and usl is not None:
+                        data = df[process_var].dropna()
+                        
+                        # Cálculos
+                        mean = data.mean()
+                        std = data.std()
+                        
+                        # Índices de capacidade
+                        cp = (usl - lsl) / (6 * std)
+                        cpu = (usl - mean) / (3 * std)
+                        cpl = (mean - lsl) / (3 * std)
+                        cpk = min(cpu, cpl)
+                        
+                        # Pp e Ppk (performance)
+                        pp = (usl - lsl) / (6 * data.std())
+                        ppu = (usl - mean) / (3 * data.std())
+                        ppl = (mean - lsl) / (3 * data.std())
+                        ppk = min(ppu, ppl)
+                        
+                        # Nível sigma
+                        sigma_level = 3 * cpk
+                        
+                        # DPMO
+                        z_usl = (usl - mean) / std
+                        z_lsl = (lsl - mean) / std
+                        
+                        from scipy.stats import norm
+                        p_above_usl = 1 - norm.cdf(z_usl)
+                        p_below_lsl = norm.cdf(z_lsl)
+                        total_defects = p_above_usl + p_below_lsl
+                        dpmo = total_defects * 1000000
+                        
+                        # Mostrar resultados
+                        st.subheader("Resultados")
+                        
+                        col1_r, col2_r = st.columns(2)
+                        
+                        with col1_r:
+                            st.metric("Cp", f"{cp:.3f}")
+                            st.metric("Cpk", f"{cpk:.3f}")
+                            st.metric("Pp", f"{pp:.3f}")
+                            st.metric("Ppk", f"{ppk:.3f}")
+                        
+                        with col2_r:
+                            st.metric("Nível Sigma", f"{sigma_level:.2f}σ")
+                            st.metric("DPMO", f"{dpmo:.0f}")
+                            st.metric("Yield", f"{(1-total_defects)*100:.2f}%")
+                        
+                        # Interpretação
+                        st.write("**Interpretação:**")
+                        
+                        if cpk >= 1.33:
+                            st.success("✅ Processo capaz (Cpk ≥ 1.33)")
+                        elif cpk >= 1.0:
+                            st.warning("⚠️ Processo marginalmente capaz (1.0 ≤ Cpk < 1.33)")
+                        else:
+                            st.error("❌ Processo não capaz (Cpk < 1.0)")
+            
+            with col2:
+                if lsl is not None and usl is not None and process_var:
+                    st.subheader("Gráfico de Capacidade")
+                    
+                    data = df[process_var].dropna()
+                    
+                    # Criar histograma com curva normal e limites
+                    fig = go.Figure()
+                    
+                    # Histograma
+                    fig.add_trace(go.Histogram(
+                        x=data,
+                        name='Dados',
+                        nbinsx=30,
+                        histnorm='probability density'
+                    ))
+                    
+                    # Curva normal
+                    x_range = np.linspace(data.min(), data.max(), 100)
+                    y_normal = norm.pdf(x_range, data.mean(), data.std())
+                    
+                    fig.add_trace(go.Scatter(
+                        x=x_range,
+                        y=y_normal,
+                        mode='lines',
+                        name='Normal',
+                        line=dict(color='red', width=2)
+                    ))
+                    
+                    # Adicionar linhas de especificação
+                    fig.add_vline(x=lsl, line_dash="dash", line_color="red", annotation_text="LSL")
+                    fig.add_vline(x=usl, line_dash="dash", line_color="red", annotation_text="USL")
+                    if target:
+                        fig.add_vline(x=target, line_dash="dash", line_color="green", annotation_text="Target")
+                    fig.add_vline(x=data.mean(), line_dash="solid", line_color="blue", annotation_text="Mean")
+                    
+                    fig.update_layout(
+                        title=f"Capacidade do Processo - {process_var}",
+                        xaxis_title=process_var,
+                        yaxis_title="Densidade"
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Nenhuma coluna numérica encontrada nos dados")
+    else:
+        st.info("Carregue dados na aba 'Upload de Dados' para análise de capacidade")
 
 # Tab 5: Validação
 with tab5:
-    st.header("Validação e Qualidade dos Dados")
+    st.header("Validação de Dados")
     
-    if not st.session_state.measure_data.empty:
-        df = st.session_state.measure_data
+    if st.session_state.uploaded_data is not None:
+        df = st.session_state.uploaded_data
         
-        # Métricas gerais
-        st.subheader("📊 Métricas de Qualidade")
+        # Relatório de qualidade
+        st.subheader("Relatório de Qualidade dos Dados")
         
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Total de Registros", len(df))
-        
-        with col2:
             total_cells = len(df) * len(df.columns)
             missing_cells = df.isnull().sum().sum()
             completeness = (1 - missing_cells / total_cells) * 100
             st.metric("Completude", f"{completeness:.1f}%")
         
-        with col3:
+        with col2:
             duplicates = df.duplicated().sum()
+            uniqueness = (1 - duplicates / len(df)) * 100
+            st.metric("Unicidade", f"{uniqueness:.1f}%")
+        
+        with col3:
             st.metric("Registros Duplicados", duplicates)
         
         with col4:
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            consistency = 100  # Placeholder para cálculo de consistência
-            st.metric("Consistência", f"{consistency:.1f}%")
+            st.metric("Valores Faltantes", missing_cells)
         
-        # Análise detalhada
-        st.subheader("🔍 Análise Detalhada")
+        # Detalhamento por coluna
+        st.subheader("Análise Detalhada por Coluna")
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Completude por Campo**")
+        column_analysis = []
+        for col in df.columns:
+            analysis = {
+                'Coluna': col,
+                'Tipo': str(df[col].dtype),
+                'Não-Nulos': df[col].notna().sum(),
+                'Nulos': df[col].isna().sum(),
+                '% Completo': f"{(df[col].notna().sum() / len(df) * 100):.1f}%",
+                'Únicos': df[col].nunique(),
+                'Duplicados': len(df) - df[col].nunique()
+            }
             
-            completeness_by_field = ((1 - df.isnull().sum() / len(df)) * 100).round(2)
-            completeness_df = pd.DataFrame({
-                'Campo': completeness_by_field.index,
-                'Completude (%)': completeness_by_field.values
-            }).sort_values('Completude (%)')
-            
-            # Colorir baseado na completude
-            def color_completeness(val):
-                if val >= 95:
-                    return 'background-color: #90EE90'  # Verde claro
-                elif val >= 80:
-                    return 'background-color: #FFD700'  # Amarelo
-                else:
-                    return 'background-color: #FFB6C1'  # Vermelho claro
-            
-            styled_df = completeness_df.style.applymap(
-                color_completeness,
-                subset=['Completude (%)']
-            )
-            
-            st.dataframe(completeness_df, use_container_width=True, hide_index=True)
-        
-        with col2:
-            st.write("**Detecção de Anomalias**")
-            
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            anomalies = []
-            
-            for col in numeric_cols:
-                if col in df.columns:
-                    # Método IQR
-                    Q1 = df[col].quantile(0.25)
-                    Q3 = df[col].quantile(0.75)
-                    IQR = Q3 - Q1
-                    
-                    lower = Q1 - 1.5 * IQR
-                    upper = Q3 + 1.5 * IQR
-                    
-                    outliers = df[(df[col] < lower) | (df[col] > upper)]
-                    
-                    if len(outliers) > 0:
-                        anomalies.append({
-                            'Campo': col,
-                            'Anomalias': len(outliers),
-                            '% do Total': f"{(len(outliers)/len(df)*100):.1f}%"
-                        })
-            
-            if anomalies:
-                anomaly_df = pd.DataFrame(anomalies)
-                st.dataframe(anomaly_df, use_container_width=True, hide_index=True)
+            # Adicionar análise de outliers para colunas numéricas
+            if df[col].dtype in ['int64', 'float64']:
+                Q1 = df[col].quantile(0.25)
+                Q3 = df[col].quantile(0.75)
+                IQR = Q3 - Q1
+                outliers = ((df[col] < (Q1 - 1.5 * IQR)) | (df[col] > (Q3 + 1.5 * IQR))).sum()
+                analysis['Outliers'] = outliers
             else:
-                st.success("✅ Nenhuma anomalia detectada")
-        
-        # Regras de validação personalizadas
-        st.subheader("📋 Regras de Validação Personalizadas")
-        
-        with st.expander("Configurar Regras de Validação"):
-            col1, col2, col3 = st.columns([2, 2, 1])
+                analysis['Outliers'] = 'N/A'
             
-            with col1:
-                rule_field = st.selectbox("Campo", df.columns.tolist())
-            
-            with col2:
-                rule_type = st.selectbox("Tipo de Regra", [
-                    "Maior que",
-                    "Menor que",
-                    "Entre valores",
-                    "Não nulo",
-                    "Único",
-                    "Formato específico"
-                ])
-            
-            with col3:
-                if rule_type in ["Maior que", "Menor que"]:
-                    rule_value = st.number_input("Valor", value=0.0)
-                elif rule_type == "Entre valores":
-                    rule_min = st.number_input("Mínimo", value=0.0)
-                    rule_max = st.number_input("Máximo", value=100.0)
-            
-            if st.button("Aplicar Validação"):
-                violations = []
-                
-                if rule_type == "Maior que":
-                    violations = df[df[rule_field] <= rule_value]
-                elif rule_type == "Menor que":
-                    violations = df[df[rule_field] >= rule_value]
-                elif rule_type == "Entre valores":
-                    violations = df[(df[rule_field] < rule_min) | (df[rule_field] > rule_max)]
-                elif rule_type == "Não nulo":
-                    violations = df[df[rule_field].isnull()]
-                elif rule_type == "Único":
-                    duplicates = df[df.duplicated(subset=[rule_field], keep=False)]
-                    violations = duplicates
-                
-                if len(violations) > 0:
-                    st.warning(f"⚠️ {len(violations)} violações encontradas")
-                    st.dataframe(violations, use_container_width=True)
-                else:
-                    st.success("✅ Nenhuma violação encontrada")
+            column_analysis.append(analysis)
         
-        # Score geral de qualidade
-        st.subheader("🎯 Score de Qualidade dos Dados")
+        analysis_df = pd.DataFrame(column_analysis)
+        st.dataframe(analysis_df, use_container_width=True, hide_index=True)
         
-        # Calcular score baseado em múltiplos fatores
-        score_components = {
-            'Completude': completeness,
-            'Unicidade': (1 - duplicates / len(df)) * 100 if len(df) > 0 else 100,
-            'Consistência': consistency,
-            'Validade': 95  # Placeholder
-        }
+        # MSA - Measurement System Analysis (se aplicável)
+        st.subheader("MSA - Análise do Sistema de Medição")
         
-        overall_score = np.mean(list(score_components.values()))
+        st.info("""
+        Para realizar uma análise completa do sistema de medição (MSA), você precisará de:
+        - Dados de repetibilidade (mesma peça, mesmo operador)
+        - Dados de reprodutibilidade (mesma peça, operadores diferentes)
+        - Padrão de referência conhecido
+        """)
         
-        col1, col2 = st.columns([1, 3])
-        
-        with col1:
-            # Gauge chart para score geral
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=overall_score,
-                title={'text': "Score Geral"},
-                domain={'x': [0, 1], 'y': [0, 1]},
-                gauge={
-                    'axis': {'range': [0, 100]},
-                    'bar': {'color': "darkblue"},
-                    'steps': [
-                        {'range': [0, 50], 'color': "lightgray"},
-                        {'range': [50, 80], 'color': "yellow"},
-                        {'range': [80, 100], 'color': "lightgreen"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "red", 'width': 4},
-                        'thickness': 0.75,
-                        'value': 90
-                    }
-                }
-            ))
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            # Breakdown dos componentes
-            st.write("**Componentes do Score:**")
-            
-            for component, value in score_components.items():
-                col_label, col_bar, col_value = st.columns([2, 4, 1])
-                with col_label:
-                    st.write(component)
-                with col_bar:
-                    st.progress(value / 100)
-                with col_value:
-                    st.write(f"{value:.1f}%")
-            
-            # Recomendações
-            st.write("**Recomendações:**")
-            if completeness < 90:
-                st.warning("• Melhorar completude dos dados - verificar campos obrigatórios")
-            if duplicates > 0:
-                st.warning("• Remover registros duplicados")
-            if overall_score < 80:
-                st.warning("• Revisar processo de coleta de dados")
-            else:
-                st.success("• Qualidade dos dados está adequada para análise")
+        if st.checkbox("Tenho dados para MSA"):
+            st.write("Configuração MSA em desenvolvimento...")
     else:
-        st.info("Nenhum dado disponível para validação")
+        st.info("Carregue dados na aba 'Upload de Dados' para validação")
 
 # Tab 6: Dados Salvos
 with tab6:
     st.header("Dados Salvos do Projeto")
     
-    if supabase:
-        try:
-            response = supabase.table('datasets').select("*").eq('project_id', st.session_state.project_id).execute()
+    try:
+        # Carregar dados salvos
+        measurements = supabase.table('measurements').select("*").eq('project_id', st.session_state.current_project_id).order('created_at', desc=True).execute()
+        
+        if measurements.data:
+            st.success(f"✅ {len(measurements.data)} registros salvos encontrados")
             
-            if response.data:
-                df_saved = pd.DataFrame(response.data)
-                st.success(f"✅ {len(df_saved)} registros encontrados no banco de dados")
+            # Opções de visualização
+            view_option = st.radio(
+                "Visualizar:",
+                ["Resumo", "Dados Completos", "Exportar"],
+                horizontal=True
+            )
+            
+            if view_option == "Resumo":
+                # Mostrar resumo
+                st.subheader("Resumo dos Dados Salvos")
                 
-                # Opções de visualização
-                view_option = st.radio(
-                    "Visualização:",
-                    ["Tabela Completa", "Resumo Estatístico", "Exportar Dados"]
-                )
+                # Estatísticas gerais
+                col1, col2, col3, col4 = st.columns(4)
                 
-                if view_option == "Tabela Completa":
+                with col1:
+                    st.metric("Total de Registros", len(measurements.data))
+                
+                with col2:
+                    dates = [m['measurement_date'] for m in measurements.data if 'measurement_date' in m]
+                    if dates:
+                        st.metric("Período", f"{min(dates)} a {max(dates)}")
+                
+                with col3:
+                    sources = set([m.get('data_source', 'Unknown') for m in measurements.data])
+                    st.metric("Fontes de Dados", len(sources))
+                
+                with col4:
+                    # Contar colunas únicas
+                    all_keys = set()
+                    for m in measurements.data:
+                        if 'metrics' in m and m['metrics']:
+                            all_keys.update(m['metrics'].keys())
+                    st.metric("Variáveis", len(all_keys))
+            
+            elif view_option == "Dados Completos":
+                # Converter para DataFrame
+                data_list = []
+                for m in measurements.data:
+                    if 'metrics' in m and m['metrics']:
+                        record = m['metrics']
+                        record['_measurement_date'] = m.get('measurement_date')
+                        record['_data_source'] = m.get('data_source')
+                        record['_created_at'] = m.get('created_at')
+                        data_list.append(record)
+                
+                if data_list:
+                    df_saved = pd.DataFrame(data_list)
                     st.dataframe(df_saved, use_container_width=True)
+            
+            else:  # Exportar
+                st.subheader("Exportar Dados")
                 
-                elif view_option == "Resumo Estatístico":
-                    st.write(df_saved.describe())
+                # Preparar dados para exportação
+                data_list = []
+                for m in measurements.data:
+                    if 'metrics' in m and m['metrics']:
+                        record = m['metrics']
+                        record['measurement_date'] = m.get('measurement_date')
+                        record['data_source'] = m.get('data_source')
+                        data_list.append(record)
                 
-                elif view_option == "Exportar Dados":
+                if data_list:
+                    df_export = pd.DataFrame(data_list)
+                    
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        csv = df_saved.to_csv(index=False)
+                        # CSV
+                        csv = df_export.to_csv(index=False)
                         st.download_button(
                             label="📄 Download CSV",
                             data=csv,
-                            file_name=f"dados_projeto_{st.session_state.project_id}_{datetime.now().strftime('%Y%m%d')}.csv",
+                            file_name=f"measure_data_{st.session_state.current_project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                             mime="text/csv"
                         )
                     
                     with col2:
+                        # Excel
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            df_saved.to_excel(writer, index=False)
+                            df_export.to_excel(writer, sheet_name='Measurements', index=False)
                         
                         st.download_button(
                             label="📊 Download Excel",
                             data=buffer.getvalue(),
-                            file_name=f"dados_projeto_{st.session_state.project_id}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.ms-excel"
+                            file_name=f"measure_data_{st.session_state.current_project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                     
                     with col3:
-                        json_str = df_saved.to_json(orient='records')
+                        # JSON
+                        json_str = df_export.to_json(orient='records', date_format='iso')
                         st.download_button(
                             label="📦 Download JSON",
                             data=json_str,
-                            file_name=f"dados_projeto_{st.session_state.project_id}_{datetime.now().strftime('%Y%m%d')}.json",
+                            file_name=f"measure_data_{st.session_state.current_project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                             mime="application/json"
                         )
-            else:
-                st.info("Nenhum dado salvo ainda para este projeto")
-                
-        except Exception as e:
-            st.error(f"Erro ao carregar dados: {e}")
-    else:
-        if not st.session_state.measure_data.empty:
-            st.info(f"Mostrando {len(st.session_state.measure_data)} registros salvos localmente")
-            st.dataframe(st.session_state.measure_data, use_container_width=True)
         else:
-            st.info("Nenhum dado disponível")
+            st.info("Nenhum dado salvo encontrado para este projeto")
+            
+    except Exception as e:
+        st.error(f"Erro ao carregar dados salvos: {e}")
+
+# Resumo e próximos passos
+st.divider()
+st.header("📊 Resumo da Fase Measure")
+
+if st.session_state.uploaded_data is not None:
+    df = st.session_state.uploaded_data
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Registros Carregados", len(df))
+    
+    with col2:
+        st.metric("Variáveis", len(df.columns))
+    
+    with col3:
+        numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
+        st.metric("Variáveis Numéricas", len(numeric_cols))
+    
+    with col4:
+        completeness = (1 - df.isnull().sum().sum() / (len(df) * len(df.columns))) * 100
+        st.metric("Completude", f"{completeness:.1f}%")
+    
+    if completeness >= 70:
+        st.success("✅ Dados prontos para análise! Você pode prosseguir para a fase Analyze.")
+        
+        if st.button("➡️ Avançar para Fase Analyze"):
+            try:
+                supabase.table('projects').update({
+                    'current_phase': 'Analyze',
+                    'progress_percentage': 50
+                }).eq('id', st.session_state.current_project_id).execute()
+                
+                st.success("Projeto avançado para fase Analyze!")
+                st.info("Acesse a página Analyze no menu lateral.")
+                
+            except Exception as e:
+                st.error(f"Erro ao atualizar fase: {e}")
+    else:
+        st.warning(f"⚠️ Recomenda-se ter pelo menos 70% de completude dos dados para prosseguir (atual: {completeness:.1f}%)")
+else:
+    st.info("Carregue dados para começar a fase Measure")
 
 # Footer
 st.markdown("---")
-st.markdown(f"📊 **Fase Measure** - Green Belt Project | Sistema Genérico de Coleta e Análise de Dados")
+st.caption("📊 Fase Measure - Green Belt Project Management System")
