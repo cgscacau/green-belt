@@ -5,6 +5,25 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from components.supabase_client import get_supabase_manager
+import json
+
+def convert_to_native_types(obj):
+    """Converte tipos numpy para tipos Python nativos"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, pd.Series):
+        return obj.tolist()
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict('records')
+    elif isinstance(obj, dict):
+        return {key: convert_to_native_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_native_types(item) for item in obj]
+    return obj
 
 st.set_page_config(page_title="Improve", page_icon="🛠️", layout="wide")
 
