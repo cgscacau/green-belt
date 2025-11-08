@@ -835,7 +835,7 @@ with tab4:
                 if 'created_at' in lesson:
                     st.caption(f"Documentado em: {pd.to_datetime(lesson['created_at']).strftime('%d/%m/%Y')}")
 
-# ========================= TAB 5: DOCUMENTAÇÃO =========================
+# ========================= TAB 5: DOCUMENTAÇÃO (CORRIGIDA) =========================
 
 with tab5:
     st.header("📑 Documentação Final do Projeto")
@@ -872,81 +872,218 @@ with tab5:
     
     report_format = st.selectbox(
         "Formato do Relatório",
-        ["PDF (Em desenvolvimento)", "Excel", "Word (Em desenvolvimento)"]
+        ["CSV (Simples)", "Excel (Múltiplas Abas)", "JSON (Dados Completos)"]
     )
     
     include_sections = st.multiselect(
         "Seções a incluir:",
         ["Resumo Executivo", "Project Charter", "Análises Realizadas", 
-         "Ações Implementadas", "Plano de Controle", "Lições Aprendidas",
-         "Gráficos e Visualizações", "Anexos"],
-        default=["Resumo Executivo", "Project Charter", "Ações Implementadas", 
-                "Plano de Controle", "Lições Aprendidas"]
+         "Ações Implementadas", "Plano de Controle", "Lições Aprendidas"],
+        default=["Resumo Executivo", "Plano de Controle", "Lições Aprendidas"]
     )
     
     if st.button("📥 Gerar Relatório", type="primary"):
-        if report_format == "Excel":
-            # Criar Excel com múltiplas abas
-            from io import BytesIO
+        try:
+            if report_format == "CSV (Simples)":
+                # Criar CSV consolidado
+                report_data = []
+                
+                # Adicionar resumo
+                report_data.append(['=== RESUMO EXECUTIVO ==='])
+                report_data.append(['Projeto', project_name])
+                report_data.append(['Líder', project_data.get('project_leader', 'N/A')])
+                report_data.append(['Baseline', baseline])
+                report_data.append(['Meta', target])
+                report_data.append(['Atual', current])
+                report_data.append(['Melhoria (%)', f"{((baseline-current)/baseline*100):.1f}"])
+                report_data.append([])
+                
+                # Adicionar plano de controle se existir
+                if "Plano de Controle" in include_sections and plans_df is not None and len(plans_df) > 0:
+                    report_data.append(['=== PLANO DE CONTROLE ==='])
+                    report_data.append(plans_df.columns.tolist())
+                    for _, row in plans_df.iterrows():
+                        report_data.append(row.tolist())
+                    report_data.append([])
+                
+                # Adicionar lições aprendidas se existir
+                if "Lições Aprendidas" in include_sections and lessons_df is not None and len(lessons_df) > 0:
+                    report_data.append(['=== LIÇÕES APRENDIDAS ==='])
+                    report_data.append(lessons_df.columns.tolist())
+                    for _, row in lessons_df.iterrows():
+                        report_data.append(row.tolist())
+                
+                # Converter para CSV
+                import csv
+                from io import StringIO
+                
+                output = StringIO()
+                writer = csv.writer(output)
+                writer.writerows(report_data)
+                
+                # Download
+                st.download_button(
+                    label="📥 Download Relatório CSV",
+                    data=output.getvalue(),
+                    file_name=f"relatorio_{project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+                
+                st.success("✅ Relatório CSV gerado com sucesso!")
             
-            output = BytesIO()
+            elif report_format == "Excel (Múltiplas Abas)":
+                # Tentar usar openpyxl ou método alternativo
+                try:
+                    from io import BytesIO
+                    import pandas as pd
+                    
+                    output = BytesIO()
+                    
+                    # Criar writer com engine openpyxl
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        # Resumo
+                        summary_data = pd.DataFrame({
+                            'Item': ['Projeto', 'Líder', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)'],
+                            'Valor': [
+                                project_name, 
+                                project_data.get('project_leader', 'N/A'), 
+                                baseline, 
+                                target, 
+                                current, 
+                                f"{((baseline-current)/baseline*100):.1f}"
+                            ]
+                        })
+                        summary_data.to_excel(writer, sheet_name='Resumo', index=False)
+                        
+                        # Plano de Controle
+                        if "Plano de Controle" in include_sections and plans_df is not None and len(plans_df) > 0:
+                            plans_df.to_excel(writer, sheet_name='Plano de Controle', index=False)
+                        
+                        # Lições Aprendidas
+                        if "Lições Aprendidas" in include_sections and lessons_df is not None and len(lessons_df) > 0:
+                            lessons_df.to_excel(writer, sheet_name='Lições Aprendidas', index=False)
+                        
+                        # Ações Implementadas
+                        if "Ações Implementadas" in include_sections and actions_df is not None and len(actions_df) > 0:
+                            actions_df.to_excel(writer, sheet_name='Ações', index=False)
+                    
+                    # Download
+                    st.download_button(
+                        label="📥 Download Relatório Excel",
+                        data=output.getvalue(),
+                        file_name=f"relatorio_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    st.success("✅ Relatório Excel gerado com sucesso!")
+                    
+                except ImportError:
+                    st.error("""
+                    ❌ Biblioteca Excel não disponível.
+                    
+                    Para habilitar exportação Excel, adicione ao requirements.txt:
+                    - openpyxl>=3.1.0
+                    - ou xlsxwriter>=3.1.0
+                    
+                    Enquanto isso, use a opção CSV ou JSON.
+                    """)
+                except Exception as e:
+                    st.error(f"Erro ao gerar Excel: {str(e)}")
+                    st.info("Tente usar o formato CSV ou JSON como alternativa.")
             
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                # Resumo
-                summary_data = {
-                    'Item': ['Projeto', 'Líder', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)'],
-                    'Valor': [project_name, project_data.get('project_leader', ''), 
-                             baseline, target, current, ((baseline-current)/baseline*100)]
+            elif report_format == "JSON (Dados Completos)":
+                # Criar JSON com todos os dados
+                import json
+                
+                report_json = {
+                    "project_info": {
+                        "name": project_name,
+                        "leader": project_data.get('project_leader', 'N/A'),
+                        "sponsor": project_data.get('project_sponsor', 'N/A'),
+                        "start_date": project_data.get('start_date', 'N/A'),
+                        "end_date": project_data.get('end_date', 'N/A')
+                    },
+                    "results": {
+                        "baseline": baseline,
+                        "target": target,
+                        "current": current,
+                        "improvement_percentage": ((baseline-current)/baseline*100),
+                        "expected_savings": project_data.get('expected_savings', 0)
+                    },
+                    "timestamp": datetime.now().isoformat()
                 }
-                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Resumo', index=False)
                 
-                # Plano de Controle
-                if plans_df is not None and len(plans_df) > 0:
-                    plans_df.to_excel(writer, sheet_name='Plano de Controle', index=False)
+                # Adicionar seções selecionadas
+                if "Plano de Controle" in include_sections and plans_df is not None:
+                    report_json["control_plans"] = plans_df.to_dict('records')
                 
-                # Lições Aprendidas
-                if lessons_df is not None and len(lessons_df) > 0:
-                    lessons_df.to_excel(writer, sheet_name='Lições Aprendidas', index=False)
+                if "Lições Aprendidas" in include_sections and lessons_df is not None:
+                    report_json["lessons_learned"] = lessons_df.to_dict('records')
                 
-                # Ações Implementadas
-                if actions_df is not None and len(actions_df) > 0:
-                    actions_df.to_excel(writer, sheet_name='Ações', index=False)
-            
-            # Download
-            st.download_button(
-                label="📥 Download Relatório Excel",
-                data=output.getvalue(),
-                file_name=f"relatorio_final_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-            st.success("✅ Relatório gerado com sucesso!")
-        else:
-            st.warning("Formato ainda em desenvolvimento")
+                if "Ações Implementadas" in include_sections and actions_df is not None:
+                    report_json["implemented_actions"] = actions_df.to_dict('records')
+                
+                # Download
+                st.download_button(
+                    label="📥 Download Relatório JSON",
+                    data=json.dumps(report_json, indent=2, ensure_ascii=False, default=str),
+                    file_name=f"relatorio_{project_name}_{datetime.now().strftime('%Y%m%d')}.json",
+                    mime="application/json"
+                )
+                
+                st.success("✅ Relatório JSON gerado com sucesso!")
+                
+        except Exception as e:
+            st.error(f"Erro ao gerar relatório: {str(e)}")
+            st.info("Verifique se todos os dados necessários estão disponíveis.")
     
-    # Certificação
+    # Prévia do relatório
     st.divider()
-    st.subheader("🏆 Certificação do Projeto")
+    st.subheader("👁️ Prévia do Relatório")
     
-    if achievement >= 90:
-        st.success(f"""
-        🎉 **Parabéns! Projeto concluído com sucesso!**
+    with st.expander("Ver estrutura do relatório"):
+        st.write("""
+        **Estrutura do Relatório Final:**
         
-        - Meta atingida: {achievement:.0f}%
-        - Processo sob controle estatístico
-        - Documentação completa
+        1. **Capa**
+           - Nome do projeto
+           - Equipe
+           - Período
         
-        Este projeto está pronto para certificação Green Belt.
+        2. **Resumo Executivo**
+           - Problema inicial
+           - Solução implementada
+           - Resultados alcançados
+           - Benefícios financeiros
+        
+        3. **Metodologia DMAIC**
+           - Define: Charter e escopo
+           - Measure: Baseline e sistema de medição
+           - Analyze: Causas raiz identificadas
+           - Improve: Ações implementadas
+           - Control: Plano de sustentação
+        
+        4. **Resultados e Métricas**
+           - Indicadores antes/depois
+           - Gráficos de tendência
+           - Análise de capacidade
+        
+        5. **Plano de Controle**
+           - Itens críticos
+           - Frequência de monitoramento
+           - Responsáveis
+        
+        6. **Lições Aprendidas**
+           - Sucessos
+           - Desafios
+           - Recomendações
+        
+        7. **Anexos**
+           - Dados detalhados
+           - Análises estatísticas
+           - Documentação de suporte
         """)
-        st.balloons()
-    else:
-        st.info(f"""
-        Projeto em andamento. Complete os seguintes itens:
-        
-        - {'✅' if achievement >= 90 else '⬜'} Atingir 90% da meta (atual: {achievement:.0f}%)
-        - {'✅' if plans_df is not None and len(plans_df) > 0 else '⬜'} Criar plano de controle
-        - {'✅' if lessons_df is not None and len(lessons_df) > 0 else '⬜'} Documentar lições aprendidas
-        """)
+
 
 # Footer
 st.divider()
