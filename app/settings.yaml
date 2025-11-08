@@ -1,0 +1,5 @@
+project_name: "Greenpeace DMAIC"
+org: "Greenpeace"
+default_region: "North"
+report_author: "Equipe"
+save_png_plots: true
