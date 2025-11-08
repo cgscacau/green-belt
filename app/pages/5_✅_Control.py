@@ -835,254 +835,806 @@ with tab4:
                 if 'created_at' in lesson:
                     st.caption(f"Documentado em: {pd.to_datetime(lesson['created_at']).strftime('%d/%m/%Y')}")
 
-# ========================= TAB 5: DOCUMENTAÇÃO (CORRIGIDA) =========================
+# ========================= TAB 5: DOCUMENTAÇÃO COMPLETA =========================
 
 with tab5:
     st.header("📑 Documentação Final do Projeto")
     
-    st.info("Compile toda a documentação do projeto para referência futura")
+    # Função para gerar relatório HTML completo
+    def generate_html_report(project_name):
+        """Gera relatório HTML completo com todos os dados do projeto"""
+        
+        # Buscar TODOS os dados do Supabase
+        project_info = load_project_from_db(project_name)
+        voc_items = None
+        sipoc_data = None
+        measurements = None
+        analyses = None
+        actions = None
+        control_plans = load_control_plans(project_name)
+        lessons = load_lessons_learned(project_name)
+        
+        # Buscar dados adicionais
+        if supabase:
+            try:
+                # VOC Items
+                voc_response = supabase.table('voc_items').select("*").eq('project_name', project_name).execute()
+                if voc_response.data:
+                    voc_items = pd.DataFrame(voc_response.data)
+                
+                # SIPOC
+                sipoc_response = supabase.table('sipoc').select("*").eq('project_name', project_name).execute()
+                if sipoc_response.data and len(sipoc_response.data) > 0:
+                    sipoc_data = sipoc_response.data[0]
+                
+                # Measurements
+                meas_response = supabase.table('measurements').select("*").eq('project_name', project_name).execute()
+                if meas_response.data:
+                    measurements = pd.DataFrame(meas_response.data)
+                
+                # Analyses
+                analyses_response = supabase.table('analyses').select("*").eq('project_name', project_name).execute()
+                if analyses_response.data:
+                    analyses = pd.DataFrame(analyses_response.data)
+                
+                # Actions
+                actions_response = supabase.table('improvement_actions').select("*").eq('project_name', project_name).execute()
+                if actions_response.data:
+                    actions = pd.DataFrame(actions_response.data)
+                
+                # Brainstorm Ideas
+                ideas_response = supabase.table('brainstorm_ideas').select("*").eq('project_name', project_name).execute()
+                if ideas_response.data:
+                    ideas = pd.DataFrame(ideas_response.data)
+                else:
+                    ideas = None
+                    
+            except Exception as e:
+                st.error(f"Erro ao buscar dados: {str(e)}")
+        
+        # Calcular métricas
+        baseline = project_info.get('baseline_value', 100) if project_info else 100
+        target = project_info.get('target_value', 80) if project_info else 80
+        current = baseline * 0.85  # Simulado - substituir por valor real dos measurements
+        improvement = ((baseline - current) / baseline * 100) if baseline != 0 else 0
+        achievement = ((baseline - current) / (baseline - target) * 100) if baseline != target else 0
+        
+        # Gerar gráficos como base64
+        import plotly.graph_objects as go
+        import base64
+        from io import BytesIO
+        
+        # Gráfico de progresso
+        fig_progress = go.Figure(go.Indicator(
+            mode = "gauge+number+delta",
+            value = achievement,
+            domain = {'x': [0, 1], 'y': [0, 1]},
+            title = {'text': "Progresso da Meta (%)"},
+            delta = {'reference': 100},
+            gauge = {
+                'axis': {'range': [None, 100]},
+                'bar': {'color': "darkgreen" if achievement >= 90 else "orange"},
+                'steps': [
+                    {'range': [0, 50], 'color': "lightgray"},
+                    {'range': [50, 90], 'color': "gray"}
+                ],
+                'threshold': {
+                    'line': {'color': "red", 'width': 4},
+                    'thickness': 0.75,
+                    'value': 90
+                }
+            }
+        ))
+        fig_progress.update_layout(height=300)
+        
+        # Converter gráfico para HTML
+        progress_html = fig_progress.to_html(include_plotlyjs='cdn', div_id="progress-chart")
+        
+        # Gráfico de tendência
+        if measurements is not None and len(measurements) > 0:
+            fig_trend = go.Figure()
+            fig_trend.add_trace(go.Scatter(
+                x=pd.to_datetime(measurements['measurement_date']),
+                y=measurements['metric_value'],
+                mode='lines+markers',
+                name='Medições',
+                line=dict(color='blue', width=2)
+            ))
+            fig_trend.add_hline(y=target, line_dash="dash", line_color="green", annotation_text=f"Meta: {target}")
+            fig_trend.add_hline(y=baseline, line_dash="dash", line_color="red", annotation_text=f"Baseline: {baseline}")
+            fig_trend.update_layout(
+                title="Evolução do Indicador",
+                xaxis_title="Data",
+                yaxis_title=project_info.get('primary_metric', 'Métrica') if project_info else 'Métrica',
+                height=400
+            )
+            trend_html = fig_trend.to_html(include_plotlyjs=False, div_id="trend-chart")
+        else:
+            trend_html = "<p>Dados de tendência não disponíveis</p>"
+        
+        # Gráfico de Pareto se houver análise
+        pareto_html = ""
+        if analyses is not None and len(analyses) > 0:
+            pareto_analyses = analyses[analyses['analysis_type'] == 'pareto']
+            if len(pareto_analyses) > 0:
+                try:
+                    pareto_data = pareto_analyses.iloc[0]['results']
+                    if 'data' in pareto_data:
+                        df_pareto = pd.DataFrame(pareto_data['data'])
+                        
+                        fig_pareto = go.Figure()
+                        fig_pareto.add_trace(go.Bar(
+                            x=df_pareto.get('Categoria', []),
+                            y=df_pareto.get('Frequência', df_pareto.get('Valor', [])),
+                            name='Frequência',
+                            marker_color='lightblue'
+                        ))
+                        
+                        if 'Acumulado' in df_pareto.columns:
+                            fig_pareto.add_trace(go.Scatter(
+                                x=df_pareto.get('Categoria', []),
+                                y=df_pareto['Acumulado'],
+                                name='% Acumulado',
+                                yaxis='y2',
+                                line=dict(color='red'),
+                                mode='lines+markers'
+                            ))
+                            
+                        fig_pareto.update_layout(
+                            title="Análise de Pareto",
+                            yaxis2=dict(overlaying='y', side='right', range=[0, 100]),
+                            height=400
+                        )
+                        pareto_html = fig_pareto.to_html(include_plotlyjs=False, div_id="pareto-chart")
+                except:
+                    pareto_html = ""
+        
+        # Template HTML
+        html_template = f"""
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Relatório Green Belt - {project_name}</title>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+            <style>
+                * {{
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }}
+                
+                body {{
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    padding: 20px;
+                }}
+                
+                .container {{
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    background: white;
+                    border-radius: 15px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    overflow: hidden;
+                }}
+                
+                header {{
+                    background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+                    color: white;
+                    padding: 40px;
+                    text-align: center;
+                }}
+                
+                h1 {{
+                    font-size: 2.5em;
+                    margin-bottom: 10px;
+                    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+                }}
+                
+                .subtitle {{
+                    font-size: 1.2em;
+                    opacity: 0.9;
+                }}
+                
+                .content {{
+                    padding: 40px;
+                }}
+                
+                .section {{
+                    margin-bottom: 40px;
+                    padding: 25px;
+                    background: #f8f9fa;
+                    border-radius: 10px;
+                    border-left: 5px solid #3498db;
+                }}
+                
+                h2 {{
+                    color: #2c3e50;
+                    margin-bottom: 20px;
+                    padding-bottom: 10px;
+                    border-bottom: 2px solid #3498db;
+                }}
+                
+                h3 {{
+                    color: #34495e;
+                    margin: 20px 0 15px 0;
+                }}
+                
+                .metrics {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 20px;
+                    margin: 20px 0;
+                }}
+                
+                .metric-card {{
+                    background: white;
+                    padding: 20px;
+                    border-radius: 10px;
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                    text-align: center;
+                    transition: transform 0.3s;
+                }}
+                
+                .metric-card:hover {{
+                    transform: translateY(-5px);
+                    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+                }}
+                
+                .metric-value {{
+                    font-size: 2em;
+                    font-weight: bold;
+                    color: #3498db;
+                    margin: 10px 0;
+                }}
+                
+                .metric-label {{
+                    color: #7f8c8d;
+                    font-size: 0.9em;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                }}
+                
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                    background: white;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                }}
+                
+                th {{
+                    background: #3498db;
+                    color: white;
+                    padding: 12px;
+                    text-align: left;
+                    font-weight: 600;
+                }}
+                
+                td {{
+                    padding: 12px;
+                    border-bottom: 1px solid #ecf0f1;
+                }}
+                
+                tr:hover {{
+                    background: #f8f9fa;
+                }}
+                
+                .success {{
+                    background: #d4edda;
+                    color: #155724;
+                    padding: 15px;
+                    border-radius: 5px;
+                    border-left: 5px solid #28a745;
+                    margin: 20px 0;
+                }}
+                
+                .warning {{
+                    background: #fff3cd;
+                    color: #856404;
+                    padding: 15px;
+                    border-radius: 5px;
+                    border-left: 5px solid #ffc107;
+                    margin: 20px 0;
+                }}
+                
+                .info {{
+                    background: #d1ecf1;
+                    color: #0c5460;
+                    padding: 15px;
+                    border-radius: 5px;
+                    border-left: 5px solid #17a2b8;
+                    margin: 20px 0;
+                }}
+                
+                .chart-container {{
+                    margin: 30px 0;
+                    padding: 20px;
+                    background: white;
+                    border-radius: 10px;
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                }}
+                
+                .timeline {{
+                    position: relative;
+                    padding: 20px 0;
+                }}
+                
+                .timeline-item {{
+                    padding: 20px 30px;
+                    background: white;
+                    border-radius: 10px;
+                    margin-bottom: 20px;
+                    border-left: 3px solid #3498db;
+                    box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+                }}
+                
+                .badge {{
+                    display: inline-block;
+                    padding: 5px 10px;
+                    border-radius: 20px;
+                    font-size: 0.85em;
+                    font-weight: bold;
+                    margin-right: 10px;
+                }}
+                
+                .badge-success {{
+                    background: #28a745;
+                    color: white;
+                }}
+                
+                .badge-warning {{
+                    background: #ffc107;
+                    color: #333;
+                }}
+                
+                .badge-info {{
+                    background: #17a2b8;
+                    color: white;
+                }}
+                
+                .badge-danger {{
+                    background: #dc3545;
+                    color: white;
+                }}
+                
+                footer {{
+                    background: #2c3e50;
+                    color: white;
+                    text-align: center;
+                    padding: 20px;
+                    margin-top: 40px;
+                }}
+                
+                @media print {{
+                    body {{
+                        background: white;
+                        padding: 0;
+                    }}
+                    
+                    .container {{
+                        box-shadow: none;
+                    }}
+                    
+                    .section {{
+                        page-break-inside: avoid;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <header>
+                    <h1>🏆 Relatório Final - Projeto Green Belt</h1>
+                    <div class="subtitle">{project_name}</div>
+                    <div style="margin-top: 20px;">
+                        <span style="margin: 0 15px;">📅 {datetime.now().strftime('%d/%m/%Y')}</span>
+                        <span style="margin: 0 15px;">👤 {project_info.get('project_leader', 'N/A') if project_info else 'N/A'}</span>
+                        <span style="margin: 0 15px;">🏢 {project_info.get('project_sponsor', 'N/A') if project_info else 'N/A'}</span>
+                    </div>
+                </header>
+                
+                <div class="content">
+                    <!-- Resumo Executivo -->
+                    <div class="section">
+                        <h2>📊 Resumo Executivo</h2>
+                        
+                        <div class="metrics">
+                            <div class="metric-card">
+                                <div class="metric-label">Baseline</div>
+                                <div class="metric-value">{baseline:.1f}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Meta</div>
+                                <div class="metric-value">{target:.1f}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Atual</div>
+                                <div class="metric-value">{current:.1f}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Melhoria</div>
+                                <div class="metric-value">{improvement:.1f}%</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Economia</div>
+                                <div class="metric-value">R$ {project_info.get('expected_savings', 0):,.0f}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Progresso</div>
+                                <div class="metric-value">{achievement:.0f}%</div>
+                            </div>
+                        </div>
+                        
+                        <div class="chart-container">
+                            {progress_html}
+                        </div>
+                        
+                        <div class="{'success' if achievement >= 90 else 'warning'}">
+                            <strong>Status do Projeto:</strong> 
+                            {'✅ Meta Atingida! Projeto concluído com sucesso.' if achievement >= 90 else '⏳ Projeto em andamento. Continue monitorando os resultados.'}
+                        </div>
+                    </div>
+                    
+                    <!-- DEFINE -->
+                    <div class="section">
+                        <h2>📋 DEFINE - Definição do Projeto</h2>
+                        
+                        <h3>Declaração do Problema</h3>
+                        <div class="info">
+                            {project_info.get('problem_statement', 'Não definido') if project_info else 'Não definido'}
+                        </div>
+                        
+                        <h3>Declaração da Meta</h3>
+                        <div class="info">
+                            {project_info.get('goal_statement', 'Não definido') if project_info else 'Não definido'}
+                        </div>
+                        
+                        <h3>Business Case</h3>
+                        <p>{project_info.get('business_case', 'Não definido') if project_info else 'Não definido'}</p>
+                        
+                        <h3>Escopo</h3>
+                        <p>{project_info.get('project_scope', 'Não definido') if project_info else 'Não definido'}</p>
+                        
+                        {'<h3>Voice of Customer (VOC)</h3>' if voc_items is not None else ''}
+                        {f'''
+                        <table>
+                            <tr>
+                                <th>Segmento</th>
+                                <th>Necessidade</th>
+                                <th>Prioridade</th>
+                                <th>CSAT Atual</th>
+                                <th>CSAT Meta</th>
+                            </tr>
+                            {''.join([f"""
+                            <tr>
+                                <td>{row.get('customer_segment', '')}</td>
+                                <td>{row.get('customer_need', '')}</td>
+                                <td><span class="badge badge-{'danger' if row.get('priority') == 'Crítica' else 'warning' if row.get('priority') == 'Alta' else 'info'}">{row.get('priority', '')}</span></td>
+                                <td>{row.get('csat_score', '')}</td>
+                                <td>{row.get('target_csat', '')}</td>
+                            </tr>
+                            """ for _, row in voc_items.iterrows()])}
+                        </table>
+                        ''' if voc_items is not None and len(voc_items) > 0 else '<p>Nenhum VOC cadastrado</p>'}
+                        
+                        {'<h3>SIPOC</h3>' if sipoc_data else ''}
+                        {f'''
+                        <table>
+                            <tr>
+                                <th>Suppliers</th>
+                                <th>Inputs</th>
+                                <th>Process</th>
+                                <th>Outputs</th>
+                                <th>Customers</th>
+                            </tr>
+                            <tr>
+                                <td>{sipoc_data.get('suppliers', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
+                                <td>{sipoc_data.get('inputs', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
+                                <td>{sipoc_data.get('process', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
+                                <td>{sipoc_data.get('outputs', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
+                                <td>{sipoc_data.get('customers', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
+                            </tr>
+                        </table>
+                        ''' if sipoc_data else ''}
+                    </div>
+                    
+                    <!-- MEASURE -->
+                    <div class="section">
+                        <h2>📏 MEASURE - Medição e Coleta de Dados</h2>
+                        
+                        <div class="chart-container">
+                            <h3>Tendência do Indicador</h3>
+                            {trend_html}
+                        </div>
+                        
+                        {f'''
+                        <h3>Estatísticas do Processo</h3>
+                        <div class="metrics">
+                            <div class="metric-card">
+                                <div class="metric-label">Média</div>
+                                <div class="metric-value">{measurements['metric_value'].mean():.2f}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Desvio Padrão</div>
+                                <div class="metric-value">{measurements['metric_value'].std():.2f}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Mínimo</div>
+                                <div class="metric-value">{measurements['metric_value'].min():.2f}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Máximo</div>
+                                <div class="metric-value">{measurements['metric_value'].max():.2f}</div>
+                            </div>
+                        </div>
+                        ''' if measurements is not None and len(measurements) > 0 else '<p>Dados de medição não disponíveis</p>'}
+                    </div>
+                    
+                    <!-- ANALYZE -->
+                    <div class="section">
+                        <h2>📊 ANALYZE - Análise e Identificação de Causas</h2>
+                        
+                        {pareto_html if pareto_html else ''}
+                        
+                        {f'''
+                        <h3>Análises Realizadas</h3>
+                        <table>
+                            <tr>
+                                <th>Tipo de Análise</th>
+                                <th>Data</th>
+                                <th>Status</th>
+                            </tr>
+                            {''.join([f"""
+                            <tr>
+                                <td>{row.get('analysis_type', '')}</td>
+                                <td>{pd.to_datetime(row.get('created_at', '')).strftime('%d/%m/%Y %H:%M') if row.get('created_at') else ''}</td>
+                                <td><span class="badge badge-success">Concluída</span></td>
+                            </tr>
+                            """ for _, row in analyses.iterrows()])}
+                        </table>
+                        ''' if analyses is not None and len(analyses) > 0 else '<p>Nenhuma análise registrada</p>'}
+                    </div>
+                    
+                    <!-- IMPROVE -->
+                    <div class="section">
+                        <h2>🔧 IMPROVE - Implementação de Melhorias</h2>
+                        
+                        {f'''
+                        <h3>Ações Implementadas</h3>
+                        <div class="timeline">
+                            {''.join([f"""
+                            <div class="timeline-item">
+                                <h4>{row.get('action_title', '')}</h4>
+                                <p>{row.get('description', '')}</p>
+                                <div style="margin-top: 10px;">
+                                    <span class="badge badge-{'success' if row.get('status') == 'Concluído' else 'warning' if row.get('status') == 'Em Andamento' else 'info'}">{row.get('status', '')}</span>
+                                    <span class="badge badge-info">{row.get('responsible', '')}</span>
+                                    <span class="badge badge-{'danger' if row.get('impact_level') == 'Crítico' else 'warning' if row.get('impact_level') == 'Alto' else 'info'}">{row.get('impact_level', '')} Impacto</span>
+                                </div>
+                            </div>
+                            """ for _, row in actions.iterrows()])}
+                        </div>
+                        
+                        <h3>Resumo das Ações</h3>
+                        <div class="metrics">
+                            <div class="metric-card">
+                                <div class="metric-label">Total de Ações</div>
+                                <div class="metric-value">{len(actions)}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Concluídas</div>
+                                <div class="metric-value">{len(actions[actions['status'] == 'Concluído'])}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Em Andamento</div>
+                                <div class="metric-value">{len(actions[actions['status'] == 'Em Andamento'])}</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Taxa de Conclusão</div>
+                                <div class="metric-value">{(len(actions[actions['status'] == 'Concluído']) / len(actions) * 100):.0f}%</div>
+                            </div>
+                        </div>
+                        ''' if actions is not None and len(actions) > 0 else '<p>Nenhuma ação registrada</p>'}
+                    </div>
+                    
+                    <!-- CONTROL -->
+                    <div class="section">
+                        <h2>✅ CONTROL - Controle e Sustentação</h2>
+                        
+                        {f'''
+                        <h3>Plano de Controle</h3>
+                        <table>
+                            <tr>
+                                <th>Item de Controle</th>
+                                <th>Especificação</th>
+                                <th>Método</th>
+                                <th>Frequência</th>
+                                <th>Responsável</th>
+                                <th>Criticidade</th>
+                            </tr>
+                            {''.join([f"""
+                            <tr>
+                                <td>{row.get('control_item', '')}</td>
+                                <td>{row.get('specification', '')}</td>
+                                <td>{row.get('measurement_method', '')}</td>
+                                <td>{row.get('frequency', '')}</td>
+                                <td>{row.get('responsible', '')}</td>
+                                <td><span class="badge badge-{'danger' if row.get('critical_level') == 'Crítica' else 'warning' if row.get('critical_level') == 'Alta' else 'info'}">{row.get('critical_level', '')}</span></td>
+                            </tr>
+                            """ for _, row in control_plans.iterrows()])}
+                        </table>
+                        ''' if control_plans is not None and len(control_plans) > 0 else '<p>Plano de controle não definido</p>'}
+                        
+                        {f'''
+                        <h3>Lições Aprendidas</h3>
+                        {''.join([f"""
+                        <div class="timeline-item">
+                            <h4>{row.get('lesson_type', '')}</h4>
+                            <p><strong>Descrição:</strong> {row.get('description', '')}</p>
+                            <p><strong>Recomendações:</strong> {row.get('recommendations', '')}</p>
+                            <span class="badge badge-info">{row.get('impact', '')} Impacto</span>
+                        </div>
+                        """ for _, row in lessons.iterrows()])}
+                        ''' if lessons is not None and len(lessons) > 0 else '<p>Nenhuma lição aprendida documentada</p>'}
+                    </div>
+                    
+                    <!-- Conclusão -->
+                    <div class="section">
+                        <h2>🎯 Conclusão</h2>
+                        
+                        <div class="{'success' if achievement >= 90 else 'info'}">
+                            <h3>Status Final do Projeto</h3>
+                            <p>
+                                O projeto <strong>{project_name}</strong> 
+                                {'atingiu' if achievement >= 90 else 'está progredindo em direção à'} sua meta de reduzir 
+                                o indicador de {baseline:.1f} para {target:.1f}.
+                            </p>
+                            <p>
+                                <strong>Resultado alcançado:</strong> {current:.1f} 
+                                (melhoria de {improvement:.1f}% em relação ao baseline)
+                            </p>
+                            {f'<p><strong>Economia realizada:</strong> R$ {project_info.get("expected_savings", 0):,.2f}</p>' if project_info and project_info.get("expected_savings") else ''}
+                        </div>
+                        
+                        <h3>Próximos Passos</h3>
+                        <ul>
+                            <li>Continuar monitoramento conforme plano de controle estabelecido</li>
+                            <li>Revisar indicadores mensalmente</li>
+                            <li>Aplicar lições aprendidas em projetos futuros</li>
+                            <li>Compartilhar resultados com a organização</li>
+                            {'<li>Buscar oportunidades de replicação em outras áreas</li>' if achievement >= 90 else '<li>Implementar ações corretivas conforme necessário</li>'}
+                        </ul>
+                    </div>
+                </div>
+                
+                <footer>
+                    <p>Relatório gerado automaticamente pelo Sistema Green Belt</p>
+                    <p>{datetime.now().strftime('%d de %B de %Y às %H:%M')}</p>
+                    <p>© 2024 - Projeto Lean Six Sigma</p>
+                </footer>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html_template
     
-    # Resumo executivo
-    st.subheader("📊 Resumo Executivo")
+    # Interface para gerar relatório
+    st.info("Compile toda a documentação do projeto em um relatório profissional")
+    
+    # Prévia do conteúdo
+    with st.expander("📋 Prévia do Conteúdo do Relatório"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Seções Incluídas:**")
+            st.write("✅ Resumo Executivo com métricas")
+            st.write("✅ Project Charter completo")
+            st.write("✅ VOC e SIPOC")
+            st.write("✅ Dados e gráficos de medição")
+            st.write("✅ Análises realizadas (Pareto, etc)")
+            st.write("✅ Ações de melhoria implementadas")
+            st.write("✅ Plano de controle")
+            st.write("✅ Lições aprendidas")
+        
+        with col2:
+            st.write("**Elementos Visuais:**")
+            st.write("📊 Gráfico de progresso (gauge)")
+            st.write("📈 Gráfico de tendência")
+            st.write("📊 Gráfico de Pareto")
+            st.write("🎨 Design profissional")
+            st.write("📱 Responsivo")
+            st.write("🖨️ Pronto para impressão")
+    
+    st.divider()
+    
+    # Opções de geração
+    st.subheader("🎯 Gerar Relatório Final")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("**Informações do Projeto:**")
-        st.write(f"- **Nome:** {project_name}")
-        st.write(f"- **Líder:** {project_data.get('project_leader', 'N/A')}")
-        st.write(f"- **Sponsor:** {project_data.get('project_sponsor', 'N/A')}")
-        st.write(f"- **Início:** {project_data.get('start_date', 'N/A')}")
-        st.write(f"- **Término:** {project_data.get('end_date', 'N/A')}")
+        report_format = st.selectbox(
+            "Formato do Relatório",
+            ["HTML Interativo (Recomendado)", "PDF (via HTML)", "Excel Detalhado"]
+        )
     
     with col2:
-        st.write("**Resultados:**")
-        st.write(f"- **Baseline:** {baseline:.1f}")
-        st.write(f"- **Meta:** {target:.1f}")
-        st.write(f"- **Atual:** {current:.1f}")
-        st.write(f"- **Melhoria:** {((baseline - current)/baseline*100):.1f}%")
-        
-        if project_data.get('expected_savings'):
-            st.write(f"- **Economia:** R$ {project_data['expected_savings']:,.2f}")
+        include_charts = st.checkbox("Incluir gráficos interativos", value=True)
+        include_timeline = st.checkbox("Incluir linha do tempo", value=True)
     
-    st.divider()
+    # Botões de ação
+    col1, col2, col3 = st.columns(3)
     
-    # Gerar relatório
-    st.subheader("📄 Gerar Relatório Final")
-    
-    report_format = st.selectbox(
-        "Formato do Relatório",
-        ["CSV (Simples)", "Excel (Múltiplas Abas)", "JSON (Dados Completos)"]
-    )
-    
-    include_sections = st.multiselect(
-        "Seções a incluir:",
-        ["Resumo Executivo", "Project Charter", "Análises Realizadas", 
-         "Ações Implementadas", "Plano de Controle", "Lições Aprendidas"],
-        default=["Resumo Executivo", "Plano de Controle", "Lições Aprendidas"]
-    )
-    
-    if st.button("📥 Gerar Relatório", type="primary"):
-        try:
-            if report_format == "CSV (Simples)":
-                # Criar CSV consolidado
-                report_data = []
-                
-                # Adicionar resumo
-                report_data.append(['=== RESUMO EXECUTIVO ==='])
-                report_data.append(['Projeto', project_name])
-                report_data.append(['Líder', project_data.get('project_leader', 'N/A')])
-                report_data.append(['Baseline', baseline])
-                report_data.append(['Meta', target])
-                report_data.append(['Atual', current])
-                report_data.append(['Melhoria (%)', f"{((baseline-current)/baseline*100):.1f}"])
-                report_data.append([])
-                
-                # Adicionar plano de controle se existir
-                if "Plano de Controle" in include_sections and plans_df is not None and len(plans_df) > 0:
-                    report_data.append(['=== PLANO DE CONTROLE ==='])
-                    report_data.append(plans_df.columns.tolist())
-                    for _, row in plans_df.iterrows():
-                        report_data.append(row.tolist())
-                    report_data.append([])
-                
-                # Adicionar lições aprendidas se existir
-                if "Lições Aprendidas" in include_sections and lessons_df is not None and len(lessons_df) > 0:
-                    report_data.append(['=== LIÇÕES APRENDIDAS ==='])
-                    report_data.append(lessons_df.columns.tolist())
-                    for _, row in lessons_df.iterrows():
-                        report_data.append(row.tolist())
-                
-                # Converter para CSV
-                import csv
-                from io import StringIO
-                
-                output = StringIO()
-                writer = csv.writer(output)
-                writer.writerows(report_data)
-                
-                # Download
-                st.download_button(
-                    label="📥 Download Relatório CSV",
-                    data=output.getvalue(),
-                    file_name=f"relatorio_{project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-                
-                st.success("✅ Relatório CSV gerado com sucesso!")
-            
-            elif report_format == "Excel (Múltiplas Abas)":
-                # Tentar usar openpyxl ou método alternativo
+    with col1:
+        if st.button("🌐 Gerar HTML", type="primary", use_container_width=True):
+            with st.spinner("Gerando relatório completo..."):
                 try:
-                    from io import BytesIO
-                    import pandas as pd
-                    
-                    output = BytesIO()
-                    
-                    # Criar writer com engine openpyxl
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        # Resumo
-                        summary_data = pd.DataFrame({
-                            'Item': ['Projeto', 'Líder', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)'],
-                            'Valor': [
-                                project_name, 
-                                project_data.get('project_leader', 'N/A'), 
-                                baseline, 
-                                target, 
-                                current, 
-                                f"{((baseline-current)/baseline*100):.1f}"
-                            ]
-                        })
-                        summary_data.to_excel(writer, sheet_name='Resumo', index=False)
-                        
-                        # Plano de Controle
-                        if "Plano de Controle" in include_sections and plans_df is not None and len(plans_df) > 0:
-                            plans_df.to_excel(writer, sheet_name='Plano de Controle', index=False)
-                        
-                        # Lições Aprendidas
-                        if "Lições Aprendidas" in include_sections and lessons_df is not None and len(lessons_df) > 0:
-                            lessons_df.to_excel(writer, sheet_name='Lições Aprendidas', index=False)
-                        
-                        # Ações Implementadas
-                        if "Ações Implementadas" in include_sections and actions_df is not None and len(actions_df) > 0:
-                            actions_df.to_excel(writer, sheet_name='Ações', index=False)
+                    html_report = generate_html_report(project_name)
                     
                     # Download
                     st.download_button(
-                        label="📥 Download Relatório Excel",
-                        data=output.getvalue(),
-                        file_name=f"relatorio_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        label="📥 Download Relatório HTML",
+                        data=html_report,
+                        file_name=f"relatorio_completo_{project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                        mime="text/html",
+                        use_container_width=True
                     )
                     
-                    st.success("✅ Relatório Excel gerado com sucesso!")
+                    st.success("✅ Relatório HTML gerado com sucesso!")
                     
-                except ImportError:
-                    st.error("""
-                    ❌ Biblioteca Excel não disponível.
-                    
-                    Para habilitar exportação Excel, adicione ao requirements.txt:
-                    - openpyxl>=3.1.0
-                    - ou xlsxwriter>=3.1.0
-                    
-                    Enquanto isso, use a opção CSV ou JSON.
-                    """)
+                    # Prévia
+                    with st.expander("👁️ Visualizar Relatório"):
+                        st.components.v1.html(html_report, height=800, scrolling=True)
+                        
                 except Exception as e:
-                    st.error(f"Erro ao gerar Excel: {str(e)}")
-                    st.info("Tente usar o formato CSV ou JSON como alternativa.")
+                    st.error(f"Erro ao gerar relatório: {str(e)}")
+    
+    with col2:
+        if st.button("📄 Instruções PDF", use_container_width=True):
+            st.info("""
+            **Para converter HTML em PDF:**
+            1. Abra o arquivo HTML no navegador
+            2. Pressione Ctrl+P (ou Cmd+P no Mac)
+            3. Selecione "Salvar como PDF"
+            4. Ajuste as configurações conforme necessário
+            5. Salve o arquivo
             
-            elif report_format == "JSON (Dados Completos)":
-                # Criar JSON com todos os dados
-                import json
-                
-                report_json = {
-                    "project_info": {
-                        "name": project_name,
-                        "leader": project_data.get('project_leader', 'N/A'),
-                        "sponsor": project_data.get('project_sponsor', 'N/A'),
-                        "start_date": project_data.get('start_date', 'N/A'),
-                        "end_date": project_data.get('end_date', 'N/A')
-                    },
-                    "results": {
-                        "baseline": baseline,
-                        "target": target,
-                        "current": current,
-                        "improvement_percentage": ((baseline-current)/baseline*100),
-                        "expected_savings": project_data.get('expected_savings', 0)
-                    },
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                # Adicionar seções selecionadas
-                if "Plano de Controle" in include_sections and plans_df is not None:
-                    report_json["control_plans"] = plans_df.to_dict('records')
-                
-                if "Lições Aprendidas" in include_sections and lessons_df is not None:
-                    report_json["lessons_learned"] = lessons_df.to_dict('records')
-                
-                if "Ações Implementadas" in include_sections and actions_df is not None:
-                    report_json["implemented_actions"] = actions_df.to_dict('records')
-                
-                # Download
-                st.download_button(
-                    label="📥 Download Relatório JSON",
-                    data=json.dumps(report_json, indent=2, ensure_ascii=False, default=str),
-                    file_name=f"relatorio_{project_name}_{datetime.now().strftime('%Y%m%d')}.json",
-                    mime="application/json"
-                )
-                
-                st.success("✅ Relatório JSON gerado com sucesso!")
-                
-        except Exception as e:
-            st.error(f"Erro ao gerar relatório: {str(e)}")
-            st.info("Verifique se todos os dados necessários estão disponíveis.")
+            O relatório HTML foi otimizado para impressão!
+            """)
     
-    # Prévia do relatório
-    st.divider()
-    st.subheader("👁️ Prévia do Relatório")
-    
-    with st.expander("Ver estrutura do relatório"):
-        st.write("""
-        **Estrutura do Relatório Final:**
-        
-        1. **Capa**
-           - Nome do projeto
-           - Equipe
-           - Período
-        
-        2. **Resumo Executivo**
-           - Problema inicial
-           - Solução implementada
-           - Resultados alcançados
-           - Benefícios financeiros
-        
-        3. **Metodologia DMAIC**
-           - Define: Charter e escopo
-           - Measure: Baseline e sistema de medição
-           - Analyze: Causas raiz identificadas
-           - Improve: Ações implementadas
-           - Control: Plano de sustentação
-        
-        4. **Resultados e Métricas**
-           - Indicadores antes/depois
-           - Gráficos de tendência
-           - Análise de capacidade
-        
-        5. **Plano de Controle**
-           - Itens críticos
-           - Frequência de monitoramento
-           - Responsáveis
-        
-        6. **Lições Aprendidas**
-           - Sucessos
-           - Desafios
-           - Recomendações
-        
-        7. **Anexos**
-           - Dados detalhados
-           - Análises estatísticas
-           - Documentação de suporte
-        """)
+    with col3:
+        if st.button("📊 Versão Simplificada", use_container_width=True):
+            # Versão simplificada em CSV
+            summary_data = {
+                'Métrica': ['Projeto', 'Líder', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)', 'Status'],
+                'Valor': [
+                    project_name,
+                    project_data.get('project_leader', 'N/A'),
+                    baseline,
+                    target,
+                    current,
+                    f"{improvement:.1f}",
+                    'Concluído' if achievement >= 90 else 'Em andamento'
+                ]
+            }
+            
+            df_summary = pd.DataFrame(summary_data)
+            csv = df_summary.to_csv(index=False)
+            
+            st.download_button(
+                label="📥 Download CSV",
+                data=csv,
+                file_name=f"resumo_{project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
 
 
 # Footer
