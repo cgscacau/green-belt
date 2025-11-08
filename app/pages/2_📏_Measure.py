@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import io
 from scipy import stats
+from scipy.stats import norm
 
 # Configuração da página
 st.set_page_config(
