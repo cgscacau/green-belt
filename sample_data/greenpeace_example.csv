@@ -1,0 +1,13 @@
+date,site,region,metric,value,unit,source
+2025-06-01,River A,North,Water_pH,6.8,pH,field_sensor
+2025-06-01,River A,North,Turbidity,4.2,NTU,lab
+2025-06-01,River A,North,NO3,2.1,mg/L,lab
+2025-06-15,River A,North,Water_pH,6.5,pH,field_sensor
+2025-06-15,River A,North,Turbidity,5.3,NTU,lab
+2025-06-15,River A,North,NO3,2.4,mg/L,lab
+2025-07-01,River B,South,Water_pH,7.2,pH,field_sensor
+2025-07-01,River B,South,Turbidity,3.0,NTU,lab
+2025-07-01,River B,South,NO3,1.2,mg/L,lab
+2025-07-15,River B,South,Water_pH,7.1,pH,field_sensor
+2025-07-15,River B,South,Turbidity,3.2,NTU,lab
+2025-07-15,River B,South,NO3,1.3,mg/L,lab
