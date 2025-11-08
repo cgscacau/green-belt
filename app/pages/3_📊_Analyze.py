@@ -9,7 +9,6 @@ app_dir = Path(__file__).parent.parent
 if str(app_dir) not in sys.path:
     sys.path.insert(0, str(app_dir))
 
-from components.upload_and_store import init_catalog, load_dataset, list_datasets, RESULTS
 from components.stats_blocks import (
     shapiro_test, ttest_two_groups, anova_test, 
     correlation_analysis, ols_regression, levene_test
@@ -18,31 +17,36 @@ from components.visual_blocks import (
     scatter_with_regression, correlation_heatmap, 
     box_by_group, qq_plot, line_over_time
 )
-from components.reports import render_html_report, save_analysis_manifest
 
 st.set_page_config(page_title="Analyze", page_icon="📊", layout="wide")
-init_catalog()
 
 st.header("📊 Analyze — Análise Estatística e Identificação de Causas")
 
-# Seleção de dataset
-datasets_df = list_datasets()
-
-if datasets_df.empty:
-    st.warning("⚠️ Nenhum dataset disponível. Por favor, faça upload na página Measure primeiro.")
+# Verifica se há dados disponíveis na sessão
+if 'analysis_df' not in st.session_state:
+    st.warning("⚠️ Nenhum dataset disponível.")
+    st.info("Por favor, faça upload e processe os dados na página **Measure** primeiro.")
+    
+    # Botão para carregar dados de exemplo
+    if st.button("🚀 Carregar Dados de Exemplo"):
+        try:
+            sample_path = Path(__file__).parent.parent.parent / "sample_data" / "greenpeace_example.csv"
+            if sample_path.exists():
+                df = pd.read_csv(sample_path)
+                df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+                st.session_state['analysis_df'] = df
+                st.session_state['analysis_dataset'] = "greenpeace_example"
+                st.success("✅ Dados de exemplo carregados!")
+                st.rerun()
+            else:
+                st.error("Arquivo de exemplo não encontrado.")
+        except Exception as e:
+            st.error(f"Erro ao carregar exemplo: {e}")
     st.stop()
 
-selected_dataset = st.selectbox(
-    "Selecione o dataset para análise",
-    datasets_df['name'].unique(),
-    help="Escolha o dataset que foi padronizado na fase Measure"
-)
-
-df = load_dataset(selected_dataset)
-
-if df.empty:
-    st.error("Erro ao carregar dataset.")
-    st.stop()
+# Carrega dados da sessão
+df = st.session_state['analysis_df']
+dataset_name = st.session_state.get('analysis_dataset', 'dataset')
 
 # Info do dataset
 col1, col2, col3, col4 = st.columns(4)
@@ -54,7 +58,7 @@ with col3:
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     st.metric("Numéricas", len(numeric_cols))
 with col4:
-    categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     st.metric("Categóricas", len(categorical_cols))
 
 # Tabs de análise
@@ -76,40 +80,44 @@ with tab1:
             selected_var = st.selectbox("Variável para análise", numeric_cols)
             
             if selected_var:
-                # Estatísticas básicas
                 st.markdown("**Estatísticas**")
                 try:
-                    stats_dict = {
-                        "Média": df[selected_var].mean(),
-                        "Mediana": df[selected_var].median(),
-                        "Desvio Padrão": df[selected_var].std(),
-                        "Mínimo": df[selected_var].min(),
-                        "Máximo": df[selected_var].max(),
-                        "CV%": (df[selected_var].std() / df[selected_var].mean() * 100)
-                    }
+                    mean_val = df[selected_var].mean()
+                    median_val = df[selected_var].median()
+                    std_val = df[selected_var].std()
+                    min_val = df[selected_var].min()
+                    max_val = df[selected_var].max()
+                    cv_val = (std_val / mean_val * 100) if mean_val != 0 else 0
                     
-                    for key, value in stats_dict.items():
-                        st.metric(key, f"{value:.2f}")
+                    st.metric("Média", f"{mean_val:.2f}")
+                    st.metric("Mediana", f"{median_val:.2f}")
+                    st.metric("Desvio Padrão", f"{std_val:.2f}")
+                    st.metric("Mínimo", f"{min_val:.2f}")
+                    st.metric("Máximo", f"{max_val:.2f}")
+                    st.metric("CV%", f"{cv_val:.2f}")
                 except Exception as e:
                     st.error(f"Erro ao calcular estatísticas: {e}")
         
         with col2:
             # Visualizações
-            if 'date' in df.columns:
+            if 'date' in df.columns or 'data' in df.columns:
+                date_col = 'date' if 'date' in df.columns else 'data'
                 try:
-                    fig = line_over_time(df, 'date', selected_var, title=f"{selected_var} ao longo do tempo")
-                    st.plotly_chart(fig, use_container_width=True)
+                    fig = line_over_time(df, date_col, selected_var, title=f"{selected_var} ao longo do tempo")
+                    st.plotly_chart(fig, use_container_width=True, key="line_plot")
                 except Exception as e:
-                    st.error(f"Erro ao criar gráfico temporal: {e}")
+                    st.info(f"Não foi possível criar gráfico temporal")
             
             if categorical_cols:
                 group_var = st.selectbox("Agrupar por", categorical_cols)
                 if group_var:
                     try:
                         fig = box_by_group(df, selected_var, group_var)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, key="box_plot")
                     except Exception as e:
                         st.error(f"Erro ao criar boxplot: {e}")
+    else:
+        st.warning("Nenhuma variável numérica encontrada no dataset.")
 
 with tab2:
     st.subheader("Testes de Normalidade")
@@ -122,7 +130,6 @@ with tab2:
             
             if st.button("🧪 Executar Teste de Normalidade"):
                 try:
-                    # Shapiro-Wilk
                     shapiro_result = shapiro_test(df[var_to_test])
                     
                     if shapiro_result:
@@ -135,20 +142,22 @@ with tab2:
                         else:
                             st.warning(f"⚠️ Distribuição não-normal (p ≤ 0.05)")
                         
-                        # Salva resultado
                         st.session_state['last_normality_test'] = shapiro_result
+                    else:
+                        st.warning("Não foi possível executar o teste. Verifique se há dados suficientes.")
                 except Exception as e:
                     st.error(f"Erro no teste de normalidade: {e}")
         
         with col2:
             if var_to_test:
-                # Q-Q Plot
                 st.markdown("### Q-Q Plot")
                 try:
                     fig = qq_plot(df[var_to_test], title=f"Q-Q Plot - {var_to_test}")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="qq_plot")
                 except Exception as e:
-                    st.error(f"Erro ao criar Q-Q Plot: {e}")
+                    st.info("Q-Q Plot não disponível")
+    else:
+        st.warning("Nenhuma variável numérica disponível para teste.")
 
 with tab3:
     st.subheader("Testes de Comparação")
@@ -161,86 +170,88 @@ with tab3:
             group_col = st.selectbox("Variável de grupo", categorical_cols, key="comp_group")
             
             if value_col and group_col:
-                unique_groups = df[group_col].unique()
-                n_groups = len(unique_groups)
-                
-                st.info(f"Grupos encontrados: {n_groups}")
-                
-                if n_groups == 2:
-                    # Teste t
-                    if st.button("🎯 Executar Teste t"):
-                        try:
-                            # Teste de Levene primeiro
-                            levene_result = levene_test(df, value_col, group_col)
-                            
-                            if levene_result:
-                                st.markdown("### Teste de Levene (Homogeneidade)")
-                                st.metric("p-valor", f"{levene_result['p_value']:.4f}")
-                                st.caption(levene_result['interpretation'])
-                            
-                            # Teste t
-                            result = ttest_two_groups(
-                                df, value_col, group_col, 
-                                unique_groups[0], unique_groups[1]
-                            )
-                            
-                            if result:
-                                st.markdown("### Teste t de Student")
+                try:
+                    unique_groups = df[group_col].dropna().unique()
+                    n_groups = len(unique_groups)
+                    
+                    st.info(f"Grupos encontrados: {n_groups}")
+                    
+                    if n_groups == 2:
+                        if st.button("🎯 Executar Teste t"):
+                            try:
+                                # Teste t
+                                result = ttest_two_groups(
+                                    df, value_col, group_col, 
+                                    unique_groups[0], unique_groups[1]
+                                )
                                 
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("Estatística t", f"{result['t']:.4f}")
-                                with col2:
-                                    st.metric("p-valor", f"{result['p_value']:.4f}")
-                                with col3:
-                                    st.metric("Cohen's d", f"{result['cohens_d']:.4f}")
-                                
-                                if result['significant']:
-                                    st.success(f"✅ {result['interpretation']}")
-                                else:
-                                    st.info(f"ℹ️ {result['interpretation']}")
-                                
-                                st.session_state['last_ttest'] = result
-                        except Exception as e:
-                            st.error(f"Erro no teste t: {e}")
-                
-                elif n_groups > 2:
-                    # ANOVA
-                    if st.button("📊 Executar ANOVA"):
-                        try:
-                            result = anova_test(df, value_col, group_col)
-                            
-                            if result:
-                                st.markdown("### ANOVA One-Way")
-                                
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.metric("Estatística F", f"{result['F']:.4f}")
-                                with col2:
-                                    st.metric("p-valor", f"{result['p_value']:.4f}")
-                                
-                                if result['significant']:
-                                    st.success(f"✅ {result['interpretation']}")
+                                if result:
+                                    st.markdown("### Teste t de Student")
                                     
-                                    # Mostra Tukey post-hoc
-                                    if result.get('tukey'):
-                                        st.markdown("### Teste Post-Hoc (Tukey HSD)")
-                                        st.text(result['tukey'])
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("Estatística t", f"{result['t']:.4f}")
+                                    with col2:
+                                        st.metric("p-valor", f"{result['p_value']:.4f}")
+                                    with col3:
+                                        st.metric("Cohen's d", f"{result.get('cohens_d', 0):.4f}")
+                                    
+                                    if result['significant']:
+                                        st.success(f"✅ {result['interpretation']}")
+                                    else:
+                                        st.info(f"ℹ️ {result['interpretation']}")
+                                    
+                                    st.session_state['last_ttest'] = result
                                 else:
-                                    st.info(f"ℹ️ {result['interpretation']}")
+                                    st.warning("Não foi possível executar o teste t.")
+                            except Exception as e:
+                                st.error(f"Erro no teste t: {e}")
+                    
+                    elif n_groups > 2:
+                        if st.button("📊 Executar ANOVA"):
+                            try:
+                                result = anova_test(df, value_col, group_col)
                                 
-                                st.session_state['last_anova'] = result
-                        except Exception as e:
-                            st.error(f"Erro na ANOVA: {e}")
+                                if result:
+                                    st.markdown("### ANOVA One-Way")
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.metric("Estatística F", f"{result['F']:.4f}")
+                                    with col2:
+                                        st.metric("p-valor", f"{result['p_value']:.4f}")
+                                    
+                                    if result['significant']:
+                                        st.success(f"✅ {result['interpretation']}")
+                                        
+                                        if result.get('tukey'):
+                                            st.markdown("### Teste Post-Hoc (Tukey HSD)")
+                                            st.text(result['tukey'])
+                                    else:
+                                        st.info(f"ℹ️ {result['interpretation']}")
+                                    
+                                    st.session_state['last_anova'] = result
+                                else:
+                                    st.warning("Não foi possível executar ANOVA.")
+                            except Exception as e:
+                                st.error(f"Erro na ANOVA: {e}")
+                    else:
+                        st.warning("Necessário pelo menos 2 grupos para comparação.")
+                except Exception as e:
+                    st.error(f"Erro ao processar grupos: {e}")
         
         with col2:
             if value_col and group_col:
-                # Visualização
                 try:
                     fig = box_by_group(df, value_col, group_col)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="comp_box_plot")
                 except Exception as e:
-                    st.error(f"Erro ao criar visualização: {e}")
+                    st.info("Visualização não disponível")
+    else:
+        if not numeric_cols:
+            st.warning("Nenhuma variável numérica disponível.")
+        if not categorical_cols:
+            st.warning("Nenhuma variável categórica disponível.")
 
 with tab4:
     st.subheader("Análise de Correlação")
@@ -264,33 +275,15 @@ with tab4:
                         result['correlation_matrix'],
                         title=f"Correlação {method.capitalize()}"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="corr_heatmap")
                     
-                    # Correlações significativas
-                    st.markdown("### Correlações Significativas (p < 0.05)")
-                    
-                    corr_matrix = result['correlation_matrix']
-                    p_values = result['p_values']
-                    
-                    significant_corrs = []
-                    for i in range(len(corr_matrix.columns)):
-                        for j in range(i+1, len(corr_matrix.columns)):
-                            if p_values.iloc[i, j] < 0.05:
-                                significant_corrs.append({
-                                    'Var1': corr_matrix.columns[i],
-                                    'Var2': corr_matrix.columns[j],
-                                    'Correlação': corr_matrix.iloc[i, j],
-                                    'p-valor': p_values.iloc[i, j]
-                                })
-                    
-                    if significant_corrs:
-                        sig_df = pd.DataFrame(significant_corrs)
-                        sig_df = sig_df.sort_values('Correlação', key=abs, ascending=False)
-                        st.dataframe(sig_df, use_container_width=True)
-                    else:
-                        st.info("Nenhuma correlação significativa encontrada.")
+                    # Mostra matriz
+                    with st.expander("Ver matriz de correlação"):
+                        st.dataframe(result['correlation_matrix'].round(3))
                     
                     st.session_state['last_correlation'] = result
+                else:
+                    st.warning("Não foi possível calcular correlações.")
             except Exception as e:
                 st.error(f"Erro na análise de correlação: {e}")
     else:
@@ -303,11 +296,9 @@ with tab5:
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            y_var = st.selectbox("Variável dependente (Y)", numeric_cols)
-            x_vars = st.multiselect(
-                "Variáveis independentes (X)",
-                [col for col in numeric_cols if col != y_var]
-            )
+            y_var = st.selectbox("Variável dependente (Y)", numeric_cols, key="reg_y")
+            available_x = [col for col in numeric_cols if col != y_var]
+            x_vars = st.multiselect("Variáveis independentes (X)", available_x, key="reg_x")
             
             if y_var and x_vars:
                 if st.button("📈 Executar Regressão"):
@@ -317,114 +308,29 @@ with tab5:
                         if result and result.get('model'):
                             st.markdown("### Resultados da Regressão")
                             
-                            # Métricas principais
                             col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.metric("R²", f"{result['r_squared']:.4f}")
                             with col2:
                                 st.metric("R² Ajustado", f"{result['adj_r_squared']:.4f}")
                             with col3:
-                                st.metric("p-valor (modelo)", f"{result['p_value']:.4f}")
-                            
-                            # Coeficientes
-                            st.markdown("### Coeficientes")
-                            coef_df = pd.DataFrame({
-                                'Variável': list(result['coefficients'].keys()),
-                                'Coeficiente': list(result['coefficients'].values()),
-                                'p-valor': list(result['p_values_coef'].values())
-                            })
-                            
-                            st.dataframe(coef_df, use_container_width=True)
-                            
-                            # Diagnósticos
-                            st.markdown("### Diagnósticos")
-                            if result.get('residuals_normal'):
-                                st.success("✅ Resíduos normalmente distribuídos")
-                            else:
-                                st.warning("⚠️ Resíduos não-normais")
-                            
-                            st.metric(
-                                "Durbin-Watson",
-                                f"{result.get('durbin_watson', 0):.4f}",
-                                help="Valores próximos a 2 indicam ausência de autocorrelação"
-                            )
-                            
-                            # Sumário completo
-                            with st.expander("Sumário Completo do Modelo"):
-                                st.text(str(result['model'].summary()))
+                                st.metric("p-valor", f"{result['p_value']:.4f}")
                             
                             st.session_state['last_regression'] = result
+                        else:
+                            st.warning("Não foi possível executar a regressão.")
                     except Exception as e:
                         st.error(f"Erro na regressão: {e}")
         
         with col2:
             if y_var and len(x_vars) == 1:
-                # Scatter plot para regressão simples
                 try:
                     fig = scatter_with_regression(
                         df, x_vars[0], y_var,
                         title=f"Regressão: {y_var} ~ {x_vars[0]}"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="reg_scatter")
                 except Exception as e:
-                    st.error(f"Erro ao criar gráfico: {e}")
+                    st.info("Gráfico de regressão não disponível")
     else:
         st.warning("São necessárias pelo menos 2 variáveis numéricas para regressão.")
-
-# Botão para gerar relatório
-st.divider()
-
-if st.button("📄 Gerar Relatório de Análise", type="primary"):
-    try:
-        # Coleta resultados salvos
-        results_summary = []
-        
-        if 'last_normality_test' in st.session_state:
-            results_summary.append(
-                f"Teste de Normalidade: {'Normal' if st.session_state['last_normality_test']['normal'] else 'Não-normal'}"
-            )
-        
-        if 'last_ttest' in st.session_state:
-            results_summary.append(
-                f"Teste t: {'Significativo' if st.session_state['last_ttest']['significant'] else 'Não significativo'}"
-            )
-        
-        if 'last_anova' in st.session_state:
-            results_summary.append(
-                f"ANOVA: {'Significativo' if st.session_state['last_anova']['significant'] else 'Não significativo'}"
-            )
-        
-        # Gera relatório
-        html_path = RESULTS / f"analyze_report_{selected_dataset}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.html"
-        
-        metrics = [
-            {"label": "Dataset", "value": selected_dataset},
-            {"label": "Registros Analisados", "value": str(len(df))},
-            {"label": "Testes Executados", "value": str(len(results_summary))}
-        ]
-        
-        html = render_html_report(
-            title=f"Relatório de Análise - {selected_dataset}",
-            project="DMAIC Greenpeace",
-            summary="Análise estatística completa incluindo testes de normalidade, comparações e correlações.",
-            metrics=metrics,
-            conclusions="\n".join(results_summary) if results_summary else "Análises em andamento.",
-            recommendations=[
-                "Verificar pressupostos estatísticos antes de conclusões",
-                "Considerar transformações se dados não-normais",
-                "Validar resultados com conhecimento do domínio"
-            ],
-            out_html=html_path
-        )
-        
-        st.success("✅ Relatório de análise gerado com sucesso!")
-        
-        # Salva manifesto
-        manifest_id, _ = save_analysis_manifest(
-            phase="analyze",
-            dataset_id=selected_dataset,
-            parameters={"tests_executed": results_summary},
-            results={"report_path": str(html_path)}
-        )
-    except Exception as e:
-        st.error(f"Erro ao gerar relatório: {e}")
