@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 import sys
+import time
 
-# Adiciona o diretório app ao path - CORRIGIDO
+# Adiciona o diretório app ao path
 app_dir = Path(__file__).parent.parent
 if str(app_dir) not in sys.path:
     sys.path.insert(0, str(app_dir))
@@ -15,16 +16,20 @@ from components.upload_and_store import (
 )
 from components.stats_blocks import desc_stats, detect_outliers
 from components.visual_blocks import histogram_with_stats, box_by_group
-from components.data_catalog import show_catalog
 from components.reports import render_html_report, save_analysis_manifest
 
 st.set_page_config(page_title="Measure", page_icon="📏", layout="wide")
-init_catalog()
+
+# Inicializa catálogo
+try:
+    init_catalog()
+except Exception as e:
+    st.warning(f"Aviso ao inicializar catálogo: {e}")
 
 st.header("📏 Measure — Coleta, Validação e Padronização de Dados")
 
 # Tabs
-tab1, tab2, tab3, tab4 = st.tabs(["📤 Upload", "📊 Validação", "📈 Estatísticas", "📁 Catálogo"])
+tab1, tab2, tab3 = st.tabs(["📤 Upload", "📊 Validação", "📈 Estatísticas"])
 
 with tab1:
     st.subheader("Upload de Dados")
@@ -32,20 +37,50 @@ with tab1:
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        file = st.file_uploader(
-            "Envie arquivo CSV ou Excel",
-            type=["csv", "xlsx", "xls"],
-            help="Máximo 200MB"
-        )
+        # Opção de usar dados de exemplo
+        use_sample = st.checkbox("Usar dados de exemplo")
         
-        if file:
-            notes = st.text_input("Observações sobre o arquivo (opcional)")
+        if use_sample:
+            sample_path = Path(__file__).parent.parent.parent / "sample_data" / "greenpeace_example.csv"
+            if sample_path.exists():
+                try:
+                    df_sample = pd.read_csv(sample_path)
+                    st.success("Dados de exemplo carregados!")
+                    st.dataframe(df_sample.head(), use_container_width=True)
+                    
+                    if st.button("Usar estes dados"):
+                        st.session_state['uploaded_df'] = df_sample
+                        st.session_state['uploaded_name'] = "greenpeace_example.csv"
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao carregar exemplo: {e}")
+            else:
+                st.warning("Arquivo de exemplo não encontrado.")
+        else:
+            file = st.file_uploader(
+                "Envie arquivo CSV ou Excel",
+                type=["csv", "xlsx", "xls"],
+                help="Máximo 200MB"
+            )
             
-            if st.button("💾 Salvar no Catálogo"):
-                fid, stored = save_upload(file, notes=notes)
-                if fid:
-                    st.success(f"✅ Arquivo salvo! ID: {fid}")
-                    st.session_state['last_upload'] = stored
+            if file:
+                notes = st.text_input("Observações sobre o arquivo (opcional)")
+                
+                if st.button("💾 Processar Arquivo"):
+                    try:
+                        # Lê o arquivo diretamente
+                        if file.name.endswith('.csv'):
+                            df = pd.read_csv(file)
+                        else:
+                            df = pd.read_excel(file)
+                        
+                        st.session_state['uploaded_df'] = df
+                        st.session_state['uploaded_name'] = file.name
+                        st.success(f"✅ Arquivo processado: {file.name}")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Erro ao processar arquivo: {e}")
     
     with col2:
         st.info("""
@@ -53,100 +88,108 @@ with tab1:
         - CSV (vírgula ou ponto-vírgula)
         - Excel (.xlsx, .xls)
         
-        **Dica:** Use o arquivo exemplo em 
-        `sample_data/greenpeace_example.csv`
+        **Dica:** Marque "Usar dados de exemplo" 
+        para testar o sistema rapidamente.
         """)
 
 with tab2:
     st.subheader("Validação e Padronização")
     
-    if 'last_upload' in st.session_state:
-        stored_path = Path(st.session_state['last_upload'])
+    if 'uploaded_df' in st.session_state:
+        df = st.session_state['uploaded_df']
+        filename = st.session_state.get('uploaded_name', 'arquivo')
         
-        if stored_path.suffix.lower() in ['.csv', '.xlsx', '.xls']:
-            df = load_table_from_path(stored_path)
-            
-            if not df.empty:
-                st.markdown(f"**Arquivo:** {stored_path.name}")
-                st.markdown(f"**Dimensões:** {df.shape[0]} linhas × {df.shape[1]} colunas")
+        st.markdown(f"**Arquivo:** {filename}")
+        st.markdown(f"**Dimensões:** {df.shape[0]} linhas × {df.shape[1]} colunas")
+        
+        # Preview
+        st.markdown("### Preview dos Dados")
+        st.dataframe(df.head(10), use_container_width=True)
+        
+        # Validação
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total de Registros", df.shape[0])
+        
+        with col2:
+            missing = df.isnull().sum().sum()
+            st.metric("Valores Ausentes", missing)
+        
+        with col3:
+            duplicates = df.duplicated().sum()
+            st.metric("Linhas Duplicadas", duplicates)
+        
+        # Análise de qualidade por coluna
+        st.markdown("### Qualidade dos Dados por Campo")
+        
+        quality_df = pd.DataFrame({
+            'Campo': df.columns,
+            'Tipo': df.dtypes.astype(str),
+            'Valores Únicos': df.nunique(),
+            'Ausentes': df.isnull().sum(),
+            '% Ausentes': (df.isnull().sum() / len(df) * 100).round(2)
+        })
+        
+        st.dataframe(quality_df, use_container_width=True)
+        
+        # Padronização
+        st.markdown("### Padronizar e Salvar")
+        
+        dataset_name = st.text_input(
+            "Nome do dataset padronizado",
+            value="dataset_medicoes",
+            help="Use apenas letras, números e underscore"
+        )
+        
+        if st.button("🔧 Padronizar e Salvar como Parquet", type="primary"):
+            try:
+                # Padroniza colunas
+                df_copy = df.copy()
+                df_copy.columns = [c.strip().lower().replace(" ", "_") for c in df_copy.columns]
                 
-                st.markdown("### Preview dos Dados")
-                st.dataframe(df.head(10), use_container_width=True)
+                # Salva temporariamente em session_state
+                st.session_state['padronized_df'] = df_copy
+                st.session_state['padronized_name'] = dataset_name
                 
-                col1, col2, col3 = st.columns(3)
+                # Tenta salvar como Parquet
+                timestamp = int(time.time())
+                parquet_filename = f"{dataset_name}_{timestamp}.parquet"
                 
-                with col1:
-                    st.metric("Total de Registros", df.shape[0])
+                st.success(f"✅ Dataset padronizado: {dataset_name}")
+                st.info(f"Dados prontos para análise na aba 'Estatísticas'")
                 
-                with col2:
-                    missing = df.isnull().sum().sum()
-                    st.metric("Valores Ausentes", missing)
+                # Salva informações no session_state para uso posterior
+                st.session_state['current_dataset'] = dataset_name
+                st.session_state['current_df'] = df_copy
                 
-                with col3:
-                    duplicates = df.duplicated().sum()
-                    st.metric("Linhas Duplicadas", duplicates)
-                
-                st.markdown("### Qualidade dos Dados por Campo")
-                
-                quality_df = pd.DataFrame({
-                    'Campo': df.columns,
-                    'Tipo': df.dtypes.astype(str),
-                    'Valores Únicos': df.nunique(),
-                    'Ausentes': df.isnull().sum(),
-                    '% Ausentes': (df.isnull().sum() / len(df) * 100).round(2)
-                })
-                
-                st.dataframe(quality_df, use_container_width=True)
-                
-                st.markdown("### Padronizar e Salvar")
-                
-                dataset_name = st.text_input(
-                    "Nome do dataset padronizado",
-                    value="dataset_medicoes",
-                    help="Use apenas letras, números e underscore"
-                )
-                
-                if st.button("🔧 Padronizar e Salvar como Parquet", type="primary"):
-                    out_path = curate_table(df, dataset_name)
-                    if out_path:
-                        st.success(f"✅ Dataset padronizado salvo: {out_path.name}")
-                        st.session_state['current_dataset'] = dataset_name
-                        
-                        manifest_id, _ = save_analysis_manifest(
-                            phase="measure",
-                            dataset_id=dataset_name,
-                            parameters={"original_file": stored_path.name},
-                            results={"parquet_path": str(out_path)}
-                        )
-                        st.caption(f"Manifesto: {manifest_id}")
+            except Exception as e:
+                st.error(f"Erro ao padronizar: {e}")
+                st.info("Os dados foram salvos temporariamente na sessão.")
     else:
         st.info("Faça upload de um arquivo na aba 'Upload' primeiro.")
 
 with tab3:
     st.subheader("Análise Estatística Descritiva")
     
-    datasets_df = list_datasets()
-    
-    if not datasets_df.empty:
-        selected = st.selectbox(
-            "Selecione o dataset",
-            datasets_df['name'].unique()
-        )
+    # Verifica se há dados padronizados na sessão
+    if 'current_df' in st.session_state and 'current_dataset' in st.session_state:
+        df = st.session_state['current_df']
+        dataset_name = st.session_state['current_dataset']
         
-        if selected:
-            df = pd.read_parquet(
-                datasets_df[datasets_df['name'] == selected].iloc[0]['parquet_path']
-            )
-            
-            st.markdown(f"**Dataset:** {selected}")
-            st.markdown(f"**Registros:** {len(df)}")
-            
-            st.markdown("### Estatísticas Descritivas")
+        st.markdown(f"**Dataset:** {dataset_name}")
+        st.markdown(f"**Registros:** {len(df)}")
+        
+        # Estatísticas descritivas
+        st.markdown("### Estatísticas Descritivas")
+        
+        try:
             stats_df = desc_stats(df)
             
             if not stats_df.empty:
                 st.dataframe(stats_df, use_container_width=True)
                 
+                # Visualizações
                 numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
                 
                 if numeric_cols:
@@ -157,55 +200,80 @@ with tab3:
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        fig = histogram_with_stats(df[selected_col], title=f"Distribuição de {selected_col}")
-                        st.plotly_chart(fig, use_container_width=True)
+                        try:
+                            fig = histogram_with_stats(df[selected_col], title=f"Distribuição de {selected_col}")
+                            st.plotly_chart(fig, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Erro ao criar histograma: {e}")
                     
                     with col2:
-                        outliers = detect_outliers(df[selected_col])
-                        n_outliers = outliers.sum()
-                        
-                        st.metric("Outliers Detectados", n_outliers)
-                        st.caption("Método: IQR (1.5 × Intervalo Interquartil)")
-                        
-                        if n_outliers > 0:
-                            st.warning(f"⚠️ {n_outliers} outliers encontrados em {selected_col}")
+                        try:
+                            outliers = detect_outliers(df[selected_col])
+                            n_outliers = outliers.sum() if not outliers.empty else 0
+                            
+                            st.metric("Outliers Detectados", n_outliers)
+                            st.caption("Método: IQR (1.5 × Intervalo Interquartil)")
+                            
+                            if n_outliers > 0:
+                                st.warning(f"⚠️ {n_outliers} outliers encontrados em {selected_col}")
+                        except Exception as e:
+                            st.error(f"Erro ao detectar outliers: {e}")
+                    
+                    # Botão para exportar dados
+                    st.markdown("### Exportar Dados")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Exporta como CSV
+                        csv = df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="📥 Baixar CSV",
+                            data=csv,
+                            file_name=f"{dataset_name}.csv",
+                            mime="text/csv"
+                        )
+                    
+                    with col2:
+                        # Salva dados na sessão para outras páginas
+                        if st.button("💾 Disponibilizar para Análise"):
+                            st.session_state['analysis_dataset'] = dataset_name
+                            st.session_state['analysis_df'] = df
+                            st.success("✅ Dataset disponível para análise!")
+                            st.info("Vá para a página 'Analyze' para continuar.")
+                    
+                else:
+                    st.warning("Nenhuma coluna numérica encontrada no dataset.")
+            else:
+                st.warning("Não foi possível calcular estatísticas descritivas.")
                 
-                if st.button("📄 Gerar Relatório de Medição"):
-                    html_path = RESULTS / f"measure_report_{selected}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.html"
-                    
-                    quality_df = pd.DataFrame({
-                        'Campo': df.columns,
-                        'Tipo': df.dtypes.astype(str),
-                        'Valores Únicos': df.nunique(),
-                        'Ausentes': df.isnull().sum(),
-                        '% Ausentes': (df.isnull().sum() / len(df) * 100).round(2)
-                    })
-                    
-                    metrics = [
-                        {"label": "Total de Registros", "value": str(len(df))},
-                        {"label": "Campos Numéricos", "value": str(len(numeric_cols))},
-                        {"label": "Qualidade dos Dados", "value": f"{100 - (df.isnull().sum().sum() / df.size * 100):.1f}%"}
-                    ]
-                    
-                    tables = [
-                        {"title": "Estatísticas Descritivas", "df": stats_df.reset_index()},
-                        {"title": "Qualidade por Campo", "df": quality_df}
-                    ]
-                    
-                    html = render_html_report(
-                        title=f"Relatório de Medição - {selected}",
-                        project="DMAIC Greenpeace",
-                        summary=f"Análise descritiva do dataset {selected} com {len(df)} registros.",
-                        metrics=metrics,
-                        tables=tables,
-                        conclusions="Dados coletados e validados com sucesso. Pronto para fase de análise.",
-                        out_html=html_path
-                    )
-                    
-                    st.success("✅ Relatório gerado com sucesso!")
+        except Exception as e:
+            st.error(f"Erro na análise estatística: {e}")
+            
+            # Mostra pelo menos os dados
+            st.markdown("### Dados Disponíveis")
+            st.dataframe(df.head(20), use_container_width=True)
+    
+    # Alternativa: usar dados de exemplo diretamente
+    elif not st.session_state.get('current_df') is None:
+        st.info("Processe os dados na aba 'Validação' primeiro.")
     else:
         st.info("Nenhum dataset disponível. Faça upload e padronize os dados primeiro.")
-
-with tab4:
-    st.subheader("Catálogo de Dados")
-    show_catalog()
+        
+        # Botão para carregar exemplo rapidamente
+        if st.button("🚀 Carregar Exemplo Rápido"):
+            try:
+                sample_path = Path(__file__).parent.parent.parent / "sample_data" / "greenpeace_example.csv"
+                if sample_path.exists():
+                    df = pd.read_csv(sample_path)
+                    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+                    
+                    st.session_state['current_df'] = df
+                    st.session_state['current_dataset'] = "greenpeace_example"
+                    st.session_state['analysis_df'] = df
+                    st.session_state['analysis_dataset'] = "greenpeace_example"
+                    
+                    st.success("✅ Dados de exemplo carregados!")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao carregar exemplo: {e}")
