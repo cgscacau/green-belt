@@ -7,6 +7,8 @@ import sys
 # Adiciona o diretório pai ao path
 sys.path.append(str(Path(__file__).parent.parent))
 
+import config
+
 from components.upload_and_store import init_catalog, save_upload, RESULTS
 from components.reports import render_html_report
 
