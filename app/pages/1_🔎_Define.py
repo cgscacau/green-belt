@@ -414,124 +414,160 @@ if project_mode == "Criar Novo Projeto" or 'project_name' in st.session_state:
                 
                 st.info("Nenhum VOC cadastrado ainda. Use o formulário acima para adicionar.")
     
-    # Tab 3: SIPOC Diagram
-    with tab3:
-        st.header("SIPOC Diagram")
+# Tab 3: SIPOC Diagram
+with tab3:
+    st.header("SIPOC Diagram")
+    
+    if 'project_name' not in st.session_state:
+        st.warning("⚠️ Por favor, crie ou selecione um projeto primeiro na aba 'Project Charter'")
+    else:
+        st.info(f"📁 Criando SIPOC para o projeto: **{st.session_state.project_name}**")
         
-        if 'project_name' not in st.session_state:
-            st.warning("⚠️ Por favor, crie ou selecione um projeto primeiro na aba 'Project Charter'")
-        else:
-            st.info(f"📁 Criando SIPOC para o projeto: **{st.session_state.project_name}**")
+        # Layout SIPOC
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.subheader("Suppliers")
+            suppliers = st.text_area(
+                "Fornecedores",
+                height=200,
+                help="Liste os fornecedores (um por linha)",
+                value=st.session_state.get('sipoc_suppliers', '')
+            )
+        
+        with col2:
+            st.subheader("Inputs")
+            inputs = st.text_area(
+                "Entradas",
+                height=200,
+                help="Liste as entradas do processo (uma por linha)",
+                value=st.session_state.get('sipoc_inputs', '')
+            )
+        
+        with col3:
+            st.subheader("Process")
+            process = st.text_area(
+                "Processo",
+                height=200,
+                help="Liste as etapas principais do processo (uma por linha)",
+                value=st.session_state.get('sipoc_process', '')
+            )
+        
+        with col4:
+            st.subheader("Outputs")
+            outputs = st.text_area(
+                "Saídas",
+                height=200,
+                help="Liste as saídas do processo (uma por linha)",
+                value=st.session_state.get('sipoc_outputs', '')
+            )
+        
+        with col5:
+            st.subheader("Customers")
+            customers = st.text_area(
+                "Clientes",
+                height=200,
+                help="Liste os clientes (um por linha)",
+                value=st.session_state.get('sipoc_customers', '')
+            )
+        
+        # Botão para salvar SIPOC
+        if st.button("💾 Salvar SIPOC", type="primary"):
+            # Salvar no session_state
+            st.session_state.sipoc_suppliers = suppliers
+            st.session_state.sipoc_inputs = inputs
+            st.session_state.sipoc_process = process
+            st.session_state.sipoc_outputs = outputs
+            st.session_state.sipoc_customers = customers
             
-            # Layout SIPOC
+            # Salvar no banco
+            if supabase:
+                try:
+                    sipoc_record = {
+                        'project_name': st.session_state.project_name,
+                        'suppliers': suppliers,
+                        'inputs': inputs,
+                        'process': process,
+                        'outputs': outputs,
+                        'customers': customers
+                    }
+                    
+                    # Verificar se já existe
+                    existing = supabase.table('sipoc').select("*").eq('project_name', st.session_state.project_name).execute()
+                    
+                    if existing.data:
+                        response = supabase.table('sipoc').update(sipoc_record).eq('project_name', st.session_state.project_name).execute()
+                    else:
+                        response = supabase.table('sipoc').insert(sipoc_record).execute()
+                    
+                    st.success("✅ SIPOC salvo com sucesso!")
+                except Exception as e:
+                    st.error(f"Erro ao salvar SIPOC: {str(e)}")
+            else:
+                st.success("✅ SIPOC salvo localmente!")
+        
+        # Visualização do SIPOC - CORREÇÃO AQUI
+        if any([suppliers, inputs, process, outputs, customers]):
+            st.divider()
+            st.subheader("Visualização do SIPOC")
+            
+            # Criar listas a partir dos text areas
+            suppliers_list = [s.strip() for s in suppliers.split('\n') if s.strip()] if suppliers else []
+            inputs_list = [i.strip() for i in inputs.split('\n') if i.strip()] if inputs else []
+            process_list = [p.strip() for p in process.split('\n') if p.strip()] if process else []
+            outputs_list = [o.strip() for o in outputs.split('\n') if o.strip()] if outputs else []
+            customers_list = [c.strip() for c in customers.split('\n') if c.strip()] if customers else []
+            
+            # Encontrar o tamanho máximo
+            max_len = max(
+                len(suppliers_list),
+                len(inputs_list),
+                len(process_list),
+                len(outputs_list),
+                len(customers_list),
+                1  # Garantir pelo menos 1 linha
+            )
+            
+            # Padronizar o tamanho de todas as listas
+            def pad_list(lst, size):
+                """Preenche lista com strings vazias até o tamanho desejado"""
+                return lst + [''] * (size - len(lst))
+            
+            # Criar DataFrame com listas padronizadas
+            sipoc_viz = pd.DataFrame({
+                'Suppliers': pad_list(suppliers_list, max_len),
+                'Inputs': pad_list(inputs_list, max_len),
+                'Process': pad_list(process_list, max_len),
+                'Outputs': pad_list(outputs_list, max_len),
+                'Customers': pad_list(customers_list, max_len)
+            })
+            
+            # Exibir tabela
+            st.dataframe(sipoc_viz, use_container_width=True, hide_index=True)
+            
+            # Métricas do SIPOC
             col1, col2, col3, col4, col5 = st.columns(5)
-            
             with col1:
-                st.subheader("Suppliers")
-                suppliers = st.text_area(
-                    "Fornecedores",
-                    height=200,
-                    help="Liste os fornecedores (um por linha)",
-                    value=st.session_state.get('sipoc_suppliers', '')
-                )
-            
+                st.metric("Fornecedores", len(suppliers_list))
             with col2:
-                st.subheader("Inputs")
-                inputs = st.text_area(
-                    "Entradas",
-                    height=200,
-                    help="Liste as entradas do processo (uma por linha)",
-                    value=st.session_state.get('sipoc_inputs', '')
-                )
-            
+                st.metric("Entradas", len(inputs_list))
             with col3:
-                st.subheader("Process")
-                process = st.text_area(
-                    "Processo",
-                    height=200,
-                    help="Liste as etapas principais do processo (uma por linha)",
-                    value=st.session_state.get('sipoc_process', '')
-                )
-            
+                st.metric("Processos", len(process_list))
             with col4:
-                st.subheader("Outputs")
-                outputs = st.text_area(
-                    "Saídas",
-                    height=200,
-                    help="Liste as saídas do processo (uma por linha)",
-                    value=st.session_state.get('sipoc_outputs', '')
-                )
-            
+                st.metric("Saídas", len(outputs_list))
             with col5:
-                st.subheader("Customers")
-                customers = st.text_area(
-                    "Clientes",
-                    height=200,
-                    help="Liste os clientes (um por linha)",
-                    value=st.session_state.get('sipoc_customers', '')
+                st.metric("Clientes", len(customers_list))
+            
+            # Opção de download do SIPOC
+            if st.button("📥 Exportar SIPOC como CSV"):
+                csv = sipoc_viz.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"sipoc_{st.session_state.project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
                 )
-            
-            # Botão para salvar SIPOC
-            if st.button("💾 Salvar SIPOC", type="primary"):
-                sipoc_data = {
-                    'suppliers': suppliers,
-                    'inputs': inputs,
-                    'process': process,
-                    'outputs': outputs,
-                    'customers': customers
-                }
-                
-                # Salvar no session_state
-                st.session_state.sipoc_suppliers = suppliers
-                st.session_state.sipoc_inputs = inputs
-                st.session_state.sipoc_process = process
-                st.session_state.sipoc_outputs = outputs
-                st.session_state.sipoc_customers = customers
-                
-                # Salvar no banco
-                if supabase:
-                    try:
-                        sipoc_record = {
-                            'project_name': st.session_state.project_name,
-                            'sipoc_data': sipoc_data,
-                            'created_at': datetime.now().isoformat()
-                        }
-                        
-                        # Verificar se já existe
-                        existing = supabase.table('sipoc').select("*").eq('project_name', st.session_state.project_name).execute()
-                        
-                        if existing.data:
-                            supabase.table('sipoc').update(sipoc_record).eq('project_name', st.session_state.project_name).execute()
-                        else:
-                            supabase.table('sipoc').insert(sipoc_record).execute()
-                        
-                        st.success("✅ SIPOC salvo com sucesso!")
-                    except Exception as e:
-                        st.error(f"Erro ao salvar SIPOC: {str(e)}")
-                else:
-                    st.success("✅ SIPOC salvo localmente!")
-            
-            # Visualização do SIPOC
-            if any([suppliers, inputs, process, outputs, customers]):
-                st.divider()
-                st.subheader("Visualização do SIPOC")
-                
-                # Criar DataFrame para visualização
-                sipoc_viz = pd.DataFrame({
-                    'Suppliers': suppliers.split('\n') if suppliers else [],
-                    'Inputs': inputs.split('\n') if inputs else [],
-                    'Process': process.split('\n') if process else [],
-                    'Outputs': outputs.split('\n') if outputs else [],
-                    'Customers': customers.split('\n') if customers else []
-                })
-                
-                # Ajustar tamanho das listas
-                max_len = max([len(col) for col in sipoc_viz.columns if len(sipoc_viz[col]) > 0] + [0])
-                for col in sipoc_viz.columns:
-                    while len(sipoc_viz[col]) < max_len:
-                        sipoc_viz[col].append('')
-                
-                st.dataframe(sipoc_viz, use_container_width=True)
+
     
     # Tab 4: Resumo do Projeto
     with tab4:
