@@ -83,22 +83,49 @@ def load_analyses(project_name):
         st.error(f"Erro ao carregar análises: {str(e)}")
         return None
 
-# Função para salvar ação de melhoria
 def save_improvement_action(project_name, action_data):
-    """Salva ação de melhoria no banco"""
+    """Salva ação de melhoria no banco com tratamento de campos opcionais"""
     if not supabase:
         return False
     
     try:
-        action_data['project_name'] = project_name
-        action_data['created_at'] = datetime.now().isoformat()
-        action_data['updated_at'] = datetime.now().isoformat()
+        # Garantir que todos os campos necessários existam
+        action_record = {
+            'project_name': project_name,
+            'action_title': action_data.get('action_title', ''),
+            'description': action_data.get('description', ''),
+            'responsible': action_data.get('responsible', ''),
+            'due_date': action_data.get('due_date'),
+            'status': action_data.get('status', 'Não Iniciado'),
+            'impact_level': action_data.get('impact_level', 'Médio'),
+            'effort_level': action_data.get('effort_level', 'Médio'),
+            'priority': action_data.get('priority', 5),
+            'success_criteria': action_data.get('success_criteria', ''),
+            'resources_needed': action_data.get('resources_needed', ''),
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }
         
-        response = supabase.table('improvement_actions').insert(action_data).execute()
+        # Remover campos None para evitar erros
+        action_record = {k: v for k, v in action_record.items() if v is not None}
+        
+        response = supabase.table('improvement_actions').insert(action_record).execute()
         return True
+        
     except Exception as e:
         st.error(f"Erro ao salvar ação: {str(e)}")
+        
+        # Debug - mostrar estrutura esperada
+        if "could not find" in str(e).lower():
+            st.error("Estrutura da tabela incorreta. Execute o script SQL fornecido.")
+            with st.expander("Ver script SQL de correção"):
+                st.code("""
+                ALTER TABLE improvement_actions 
+                ADD COLUMN IF NOT EXISTS success_criteria TEXT,
+                ADD COLUMN IF NOT EXISTS resources_needed TEXT;
+                """)
         return False
+
 
 # Função para carregar ações de melhoria
 def load_improvement_actions(project_name):
@@ -661,7 +688,7 @@ with tab2:
     else:
         st.info("Adicione ideias na aba Brainstorming primeiro")
 
-# ========================= TAB 3: PLANO DE AÇÃO =========================
+# ========================= TAB 3: PLANO DE AÇÃO (CORRIGIDO) =========================
 
 with tab3:
     st.header("📋 Plano de Ação Detalhado")
@@ -672,6 +699,7 @@ with tab3:
         with st.form("action_plan_form", clear_on_submit=True):
             st.subheader("Nova Ação")
             
+            # Campos principais
             action_title = st.text_input("Título da Ação *")
             action_description = st.text_area("Descrição Detalhada *", height=100)
             
@@ -681,51 +709,66 @@ with tab3:
                 responsible = st.text_input("Responsável *")
                 impact_level = st.selectbox(
                     "Nível de Impacto",
-                    ["Baixo", "Médio", "Alto", "Crítico"]
+                    ["Baixo", "Médio", "Alto", "Crítico"],
+                    index=1  # Médio como padrão
                 )
             
             with col_form2:
-                due_date = st.date_input("Data de Conclusão", 
-                                        min_value=datetime.now().date())
+                due_date = st.date_input(
+                    "Data de Conclusão",
+                    min_value=datetime.now().date(),
+                    value=datetime.now().date() + timedelta(days=30)
+                )
                 effort_level = st.selectbox(
                     "Nível de Esforço",
-                    ["Baixo", "Médio", "Alto", "Muito Alto"]
+                    ["Baixo", "Médio", "Alto", "Muito Alto"],
+                    index=1  # Médio como padrão
                 )
             
             with col_form3:
                 status = st.selectbox(
                     "Status",
-                    ["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"]
+                    ["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"],
+                    index=0  # Não Iniciado como padrão
                 )
-                priority = st.number_input("Prioridade (1-10)", 1, 10, 5)
+                priority = st.number_input("Prioridade (1-10)", min_value=1, max_value=10, value=5)
             
-            success_criteria = st.text_area("Critérios de Sucesso", height=80)
-            resources_needed = st.text_area("Recursos Necessários", height=80)
+            # Campos opcionais
+            with st.expander("Campos Adicionais (Opcional)"):
+                success_criteria = st.text_area("Critérios de Sucesso", height=80)
+                resources_needed = st.text_area("Recursos Necessários", height=80)
             
             submitted = st.form_submit_button("➕ Adicionar Ação", type="primary")
             
             if submitted:
                 if all([action_title, action_description, responsible]):
+                    # Preparar dados da ação
                     action = {
                         'action_title': action_title,
                         'description': action_description,
                         'responsible': responsible,
-                        'due_date': due_date.isoformat(),
+                        'due_date': due_date.isoformat() if due_date else None,
                         'status': status,
                         'impact_level': impact_level,
                         'effort_level': effort_level,
                         'priority': priority,
-                        'success_criteria': success_criteria,
-                        'resources_needed': resources_needed
+                        'success_criteria': success_criteria if success_criteria else '',
+                        'resources_needed': resources_needed if resources_needed else ''
                     }
                     
+                    # Salvar no banco
                     if save_improvement_action(project_name, action):
                         st.success("✅ Ação adicionada com sucesso!")
+                        st.balloons()
                         st.rerun()
                     else:
-                        st.error("Erro ao salvar ação")
+                        # Tentar salvar localmente como fallback
+                        if 'local_actions' not in st.session_state:
+                            st.session_state.local_actions = []
+                        st.session_state.local_actions.append(action)
+                        st.warning("⚠️ Ação salva apenas localmente")
                 else:
-                    st.error("Preencha os campos obrigatórios")
+                    st.error("❌ Preencha todos os campos obrigatórios (*)")
     
     with col2:
         st.info("""
@@ -738,110 +781,15 @@ with tab3:
         - **Where:** Onde será feito?
         - **How:** Como será feito?
         - **How Much:** Quanto custará?
+        
+        **Status disponíveis:**
+        - Não Iniciado
+        - Em Andamento
+        - Pausado
+        - Concluído
+        - Cancelado
         """)
-    
-    # Exibir plano de ação
-    actions_df = load_improvement_actions(project_name)
-    
-    if actions_df is not None and len(actions_df) > 0:
-        st.divider()
-        st.subheader("📊 Ações Cadastradas")
-        
-        # Filtros
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            filter_status = st.multiselect(
-                "Filtrar por Status",
-                actions_df['status'].unique(),
-                default=["Não Iniciado", "Em Andamento"]
-            )
-        with col2:
-            filter_responsible = st.multiselect(
-                "Filtrar por Responsável",
-                actions_df['responsible'].unique()
-            )
-        with col3:
-            filter_impact = st.multiselect(
-                "Filtrar por Impacto",
-                actions_df['impact_level'].unique()
-            )
-        
-        # Aplicar filtros
-        filtered_actions = actions_df.copy()
-        if filter_status:
-            filtered_actions = filtered_actions[filtered_actions['status'].isin(filter_status)]
-        if filter_responsible:
-            filtered_actions = filtered_actions[filtered_actions['responsible'].isin(filter_responsible)]
-        if filter_impact:
-            filtered_actions = filtered_actions[filtered_actions['impact_level'].isin(filter_impact)]
-        
-        # Exibir ações
-        for idx, action in filtered_actions.iterrows():
-            with st.expander(f"📌 {action['action_title']} - {action['status']}"):
-                col1, col2, col3 = st.columns([2, 1, 1])
-                
-                with col1:
-                    st.write(f"**Descrição:** {action['description']}")
-                    if pd.notna(action.get('success_criteria')):
-                        st.write(f"**Critérios de Sucesso:** {action['success_criteria']}")
-                    if pd.notna(action.get('resources_needed')):
-                        st.write(f"**Recursos:** {action['resources_needed']}")
-                
-                with col2:
-                    st.metric("Responsável", action['responsible'])
-                    st.metric("Prioridade", action['priority'])
-                    st.metric("Impacto", action['impact_level'])
-                
-                with col3:
-                    st.metric("Prazo", action['due_date'])
-                    st.metric("Esforço", action['effort_level'])
-                    
-                    # Botão para atualizar status
-                    new_status = st.selectbox(
-                        "Atualizar Status",
-                        ["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"],
-                        index=["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"].index(action['status']),
-                        key=f"status_{action['id']}"
-                    )
-                    
-                    if st.button("Atualizar", key=f"update_{action['id']}"):
-                        if update_action_status(action['id'], new_status):
-                            st.success("Status atualizado!")
-                            st.rerun()
-        
-        # Gantt Chart
-        st.divider()
-        st.subheader("📅 Cronograma de Ações (Gantt)")
-        
-        # Preparar dados para Gantt
-        gantt_data = []
-        for idx, action in filtered_actions.iterrows():
-            gantt_data.append({
-                'Task': action['action_title'],
-                'Start': datetime.now().date(),
-                'Finish': pd.to_datetime(action['due_date']).date(),
-                'Resource': action['responsible'],
-                'Status': action['status']
-            })
-        
-        if gantt_data:
-            gantt_df = pd.DataFrame(gantt_data)
-            
-            # Criar gráfico Gantt
-            fig = px.timeline(
-                gantt_df,
-                x_start="Start",
-                x_end="Finish",
-                y="Task",
-                color="Status",
-                hover_data=["Resource", "Status"],
-                title="Cronograma de Implementação"
-            )
-            
-            fig.update_yaxes(autorange="reversed")
-            fig.update_layout(height=400)
-            
-            st.plotly_chart(fig, use_container_width=True)
+
 
 # ========================= TAB 4: SIMULAÇÃO =========================
 
