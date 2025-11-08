@@ -4,13 +4,17 @@ from datetime import datetime
 import json
 import sys
 
-# Adiciona o diretório pai ao path
-sys.path.append(str(Path(__file__).parent.parent))
+# Adiciona o diretório app ao path de forma mais robusta
+current_dir = Path(__file__).parent
+parent_dir = current_dir.parent
+sys.path.insert(0, str(parent_dir))
 
-import config
-
-from components.upload_and_store import init_catalog, save_upload, RESULTS
-from components.reports import render_html_report
+try:
+    from components.upload_and_store import init_catalog, save_upload, RESULTS
+    from components.reports import render_html_report
+except ImportError as e:
+    st.error(f"Erro ao importar componentes: {e}")
+    st.stop()
 
 st.set_page_config(page_title="Define", page_icon="🔎", layout="wide")
 init_catalog()
