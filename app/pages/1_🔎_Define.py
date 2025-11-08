@@ -531,4 +531,419 @@ if project_mode == "Criar Novo Projeto" or 'project_name' in st.session_state:
                             
                             st.rerun()
                         else:
-                            st.error("Preencha os<span class="cursor">█</span>
+                            st.error("Preencha os campos obrigatórios")
+            
+            with col2:
+                st.info("""
+                **📚 Guia VOC:**
+                
+                **Segmentos:** Grupos de clientes com necessidades similares
+                
+                **CTQ:** Características críticas para a qualidade que podem ser medidas
+                
+                **Prioridades:**
+                - 🔴 **Crítica:** Impacto imediato
+                - 🟠 **Alta:** Muito importante
+                - 🟡 **Média:** Importante
+                - 🟢 **Baixa:** Desejável
+                """)
+            
+            # Exibir VOCs cadastrados
+            st.divider()
+            
+            # Carregar VOCs do banco se necessário
+            if 'voc_items' not in st.session_state and supabase:
+                voc_items = load_voc_items(st.session_state.project_name)
+                if voc_items:
+                    st.session_state.voc_items = voc_items
+            
+            if 'voc_items' in st.session_state and st.session_state.voc_items:
+                st.subheader("📋 VOCs Cadastrados")
+                
+                # Converter para DataFrame
+                voc_df = pd.DataFrame(st.session_state.voc_items)
+                
+                # Filtros
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    filter_segment = st.multiselect(
+                        "Filtrar por Segmento",
+                        options=voc_df['customer_segment'].unique().tolist()
+                    )
+                with col2:
+                    filter_priority = st.multiselect(
+                        "Filtrar por Prioridade",
+                        options=["Baixa", "Média", "Alta", "Crítica"]
+                    )
+                
+                # Aplicar filtros
+                filtered_df = voc_df.copy()
+                if filter_segment:
+                    filtered_df = filtered_df[filtered_df['customer_segment'].isin(filter_segment)]
+                if filter_priority:
+                    filtered_df = filtered_df[filtered_df['priority'].isin(filter_priority)]
+                
+                # Exibir tabela
+                display_columns = ['customer_segment', 'customer_need', 'priority', 'csat_score', 'target_csat', 'ctq']
+                st.dataframe(
+                    filtered_df[display_columns],
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Métricas
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total VOCs", len(voc_df))
+                with col2:
+                    critical_count = len(voc_df[voc_df['priority'] == 'Crítica'])
+                    st.metric("Críticos", critical_count)
+                with col3:
+                    avg_gap = (voc_df['target_csat'] - voc_df['csat_score']).mean()
+                    st.metric("Gap Médio", f"{avg_gap:.1f}")
+                with col4:
+                    avg_current = voc_df['csat_score'].mean()
+                    st.metric("CSAT Médio", f"{avg_current:.1f}")
+            else:
+                st.info("Nenhum VOC cadastrado ainda")
+    
+    # ========================= TAB 3: SIPOC =========================
+    
+    with tab3:
+        st.header("SIPOC Diagram")
+        
+        if 'project_name' not in st.session_state:
+            st.warning("⚠️ Por favor, complete o Project Charter primeiro")
+        else:
+            st.info(f"📁 Projeto: **{st.session_state.project_name}**")
+            
+            # Carregar SIPOC existente
+            if supabase and 'sipoc_loaded' not in st.session_state:
+                sipoc_data = load_sipoc(st.session_state.project_name)
+                if sipoc_data:
+                    st.session_state.sipoc_suppliers = sipoc_data.get('suppliers', '')
+                    st.session_state.sipoc_inputs = sipoc_data.get('inputs', '')
+                    st.session_state.sipoc_process = sipoc_data.get('process', '')
+                    st.session_state.sipoc_outputs = sipoc_data.get('outputs', '')
+                    st.session_state.sipoc_customers = sipoc_data.get('customers', '')
+                st.session_state.sipoc_loaded = True
+            
+            # Layout SIPOC
+            st.subheader("📝 Preencher SIPOC")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                st.markdown("**🏭 Suppliers**")
+                suppliers = st.text_area(
+                    "Fornecedores",
+                    height=200,
+                    value=st.session_state.get('sipoc_suppliers', ''),
+                    help="Um por linha",
+                    label_visibility="collapsed"
+                )
+            
+            with col2:
+                st.markdown("**📥 Inputs**")
+                inputs = st.text_area(
+                    "Entradas",
+                    height=200,
+                    value=st.session_state.get('sipoc_inputs', ''),
+                    help="Um por linha",
+                    label_visibility="collapsed"
+                )
+            
+            with col3:
+                st.markdown("**⚙️ Process**")
+                process = st.text_area(
+                    "Processo",
+                    height=200,
+                    value=st.session_state.get('sipoc_process', ''),
+                    help="Um por linha",
+                    label_visibility="collapsed"
+                )
+            
+            with col4:
+                st.markdown("**📤 Outputs**")
+                outputs = st.text_area(
+                    "Saídas",
+                    height=200,
+                    value=st.session_state.get('sipoc_outputs', ''),
+                    help="Um por linha",
+                    label_visibility="collapsed"
+                )
+            
+            with col5:
+                st.markdown("**👥 Customers**")
+                customers = st.text_area(
+                    "Clientes",
+                    height=200,
+                    value=st.session_state.get('sipoc_customers', ''),
+                    help="Um por linha",
+                    label_visibility="collapsed"
+                )
+            
+            # Botões de ação
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                if st.button("💾 Salvar SIPOC", type="primary", use_container_width=True):
+                    # Salvar no session_state
+                    st.session_state.sipoc_suppliers = suppliers
+                    st.session_state.sipoc_inputs = inputs
+                    st.session_state.sipoc_process = process
+                    st.session_state.sipoc_outputs = outputs
+                    st.session_state.sipoc_customers = customers
+                    
+                    # Salvar no banco
+                    if supabase:
+                        try:
+                            sipoc_record = {
+                                'project_name': st.session_state.project_name,
+                                'suppliers': suppliers,
+                                'inputs': inputs,
+                                'process': process,
+                                'outputs': outputs,
+                                'customers': customers
+                            }
+                            
+                            # Verificar se existe
+                            existing = supabase.table('sipoc').select("*").eq('project_name', st.session_state.project_name).execute()
+                            
+                            if existing.data:
+                                response = supabase.table('sipoc').update(sipoc_record).eq('project_name', st.session_state.project_name).execute()
+                            else:
+                                response = supabase.table('sipoc').insert(sipoc_record).execute()
+                            
+                            st.success("✅ SIPOC salvo com sucesso!")
+                        except Exception as e:
+                            st.error(f"Erro: {str(e)}")
+                    else:
+                        st.success("✅ SIPOC salvo localmente!")
+            
+            with col2:
+                if st.button("🔄 Limpar", use_container_width=True):
+                    for key in ['sipoc_suppliers', 'sipoc_inputs', 'sipoc_process', 'sipoc_outputs', 'sipoc_customers']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.rerun()
+            
+            # Visualização do SIPOC
+            if any([suppliers, inputs, process, outputs, customers]):
+                st.divider()
+                st.subheader("📊 Visualização do SIPOC")
+                
+                # Criar DataFrame
+                sipoc_df = create_sipoc_dataframe(suppliers, inputs, process, outputs, customers)
+                
+                if not sipoc_df.empty:
+                    # Tabs de visualização
+                    viz_tab1, viz_tab2, viz_tab3 = st.tabs(["📋 Tabela", "📊 Métricas", "💾 Exportar"])
+                    
+                    with viz_tab1:
+                        st.dataframe(sipoc_df, use_container_width=True, hide_index=True)
+                    
+                    with viz_tab2:
+                        col1, col2, col3, col4, col5 = st.columns(5)
+                        
+                        metrics = {
+                            'Fornecedores': len([s for s in suppliers.split('\n') if s.strip()]) if suppliers else 0,
+                            'Entradas': len([i for i in inputs.split('\n') if i.strip()]) if inputs else 0,
+                            'Processos': len([p for p in process.split('\n') if p.strip()]) if process else 0,
+                            'Saídas': len([o for o in outputs.split('\n') if o.strip()]) if outputs else 0,
+                            'Clientes': len([c for c in customers.split('\n') if c.strip()]) if customers else 0
+                        }
+                        
+                        for col, (label, value) in zip([col1, col2, col3, col4, col5], metrics.items()):
+                            with col:
+                                st.metric(label, value)
+                    
+                    with viz_tab3:
+                        csv = sipoc_df.to_csv(index=False)
+                        st.download_button(
+                            "📥 Download CSV",
+                            data=csv,
+                            file_name=f"sipoc_{st.session_state.project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                            mime="text/csv"
+                        )
+    
+    # ========================= TAB 4: RESUMO =========================
+    
+    with tab4:
+        st.header("📊 Resumo do Projeto")
+        
+        if 'project_name' not in st.session_state:
+            st.warning("⚠️ Nenhum projeto ativo")
+        else:
+            # Informações do projeto
+            project_data = st.session_state.get('project_data', {})
+            
+            # Cards de métricas principais
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Projeto",
+                    st.session_state.project_name,
+                    project_data.get('project_leader', 'N/A')
+                )
+            
+            with col2:
+                if project_data.get('start_date'):
+                    days_elapsed = (datetime.now().date() - pd.to_datetime(project_data['start_date']).date()).days
+                    st.metric("Dias em Andamento", days_elapsed)
+            
+            with col3:
+                if project_data.get('baseline_value') and project_data.get('target_value'):
+                    improvement = ((project_data['target_value'] - project_data['baseline_value']) / 
+                                 abs(project_data['baseline_value']) * 100) if project_data['baseline_value'] != 0 else 0
+                    st.metric("Melhoria Esperada", f"{improvement:.1f}%")
+            
+            with col4:
+                if project_data.get('expected_savings'):
+                    st.metric("Economia Esperada", f"R$ {project_data['expected_savings']:,.0f}")
+            
+            st.divider()
+            
+            # Detalhes em colunas
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("📝 Problema")
+                if project_data.get('problem_statement'):
+                    st.info(project_data['problem_statement'])
+                else:
+                    st.warning("Não definido")
+                
+                st.subheader("🎯 Meta")
+                if project_data.get('goal_statement'):
+                    st.success(project_data['goal_statement'])
+                else:
+                    st.warning("Não definida")
+            
+            with col2:
+                st.subheader("💼 Business Case")
+                if project_data.get('business_case'):
+                    st.info(project_data['business_case'])
+                else:
+                    st.warning("Não definido")
+                
+                st.subheader("📏 Escopo")
+                if project_data.get('project_scope'):
+                    st.info(project_data['project_scope'])
+                else:
+                    st.warning("Não definido")
+            
+            # Checklist de completude
+            st.divider()
+            st.subheader("✅ Status da Fase Define")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                charter_complete = all([
+                    project_data.get('project_name'),
+                    project_data.get('problem_statement'),
+                    project_data.get('goal_statement'),
+                    project_data.get('project_leader'),
+                    project_data.get('business_case')
+                ])
+                
+                if charter_complete:
+                    st.success("✅ **Project Charter**")
+                else:
+                    st.error("❌ **Project Charter**")
+                    missing = []
+                    if not project_data.get('problem_statement'):
+                        missing.append("Problema")
+                    if not project_data.get('goal_statement'):
+                        missing.append("Meta")
+                    if not project_data.get('business_case'):
+                        missing.append("Business Case")
+                    if missing:
+                        st.caption(f"Faltam: {', '.join(missing)}")
+            
+            with col2:
+                voc_complete = 'voc_items' in st.session_state and len(st.session_state.voc_items) > 0
+                
+                if voc_complete:
+                    st.success(f"✅ **VOC** ({len(st.session_state.voc_items)} items)")
+                else:
+                    st.error("❌ **VOC**")
+                    st.caption("Adicione pelo menos 1 VOC")
+            
+            with col3:
+                sipoc_complete = any([
+                    st.session_state.get('sipoc_suppliers'),
+                    st.session_state.get('sipoc_inputs'),
+                    st.session_state.get('sipoc_process'),
+                    st.session_state.get('sipoc_outputs'),
+                    st.session_state.get('sipoc_customers')
+                ])
+                
+                if sipoc_complete:
+                    st.success("✅ **SIPOC**")
+                else:
+                    st.error("❌ **SIPOC**")
+                    st.caption("Preencha o diagrama SIPOC")
+            
+            # Status geral
+            all_complete = charter_complete and voc_complete and sipoc_complete
+            
+            if all_complete:
+                st.divider()
+                st.success("🎉 **Fase Define Completa!** Você pode prosseguir para a fase Measure.")
+                st.balloons()
+            else:
+                st.divider()
+                st.warning("⚠️ Complete todos os componentes antes de prosseguir para a fase Measure.")
+            
+            # Exportar dados
+            st.divider()
+            st.subheader("📥 Exportar Dados")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📄 Gerar Relatório JSON", use_container_width=True):
+                    export_data = {
+                        'project_charter': project_data,
+                        'voc_items': st.session_state.get('voc_items', []),
+                        'sipoc': {
+                            'suppliers': st.session_state.get('sipoc_suppliers', ''),
+                            'inputs': st.session_state.get('sipoc_inputs', ''),
+                            'process': st.session_state.get('sipoc_process', ''),
+                            'outputs': st.session_state.get('sipoc_outputs', ''),
+                            'customers': st.session_state.get('sipoc_customers', '')
+                        },
+                        'export_date': datetime.now().isoformat(),
+                        'phase_complete': all_complete
+                    }
+                    
+                    st.download_button(
+                        "💾 Download JSON",
+                        data=json.dumps(export_data, indent=2, ensure_ascii=False),
+                        file_name=f"define_{st.session_state.project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json"
+                    )
+
+else:
+    # Nenhum projeto selecionado
+    st.info("👈 Use a barra lateral para criar um novo projeto ou selecionar um existente")
+    
+    # Mostrar projetos recentes se houver
+    if supabase:
+        recent_projects = load_projects_from_db()
+        if recent_projects:
+            st.subheader("📂 Projetos Recentes")
+            
+            df = pd.DataFrame(recent_projects)
+            df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%d/%m/%Y')
+            
+            st.dataframe(
+                df[['project_name', 'project_leader', 'status', 'created_at']],
+                use_container_width=True,
+                hide_index=True
+            )
+
+# Footer
+st.divider()
+st.caption("💡 **Dica:** Complete todos os componentes da fase Define para estabelecer uma base sólida para seu projeto Lean Six Sigma")
