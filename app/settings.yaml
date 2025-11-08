@@ -3,3 +3,4 @@ org: "Greenpeace"
 default_region: "North"
 report_author: "Equipe"
 save_png_plots: true
+use_cloud: true
