@@ -2,6 +2,7 @@ import streamlit as st
 from pathlib import Path
 from datetime import datetime, date
 import json
+import pandas as pd
 from components.supabase_client import get_supabase_manager
 
 st.set_page_config(page_title="Define", page_icon="🔎", layout="wide")
