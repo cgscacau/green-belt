@@ -13,7 +13,10 @@ st.set_page_config(
 CONFIG = {}
 cfg_path = Path(__file__).parent / "settings.yaml"
 if cfg_path.exists():
-    CONFIG = yaml.safe_load(cfg_path.read_text())
+    try:
+        CONFIG = yaml.safe_load(cfg_path.read_text())
+    except:
+        CONFIG = {}
 
 # Header principal
 st.title(f"🌿 {CONFIG.get('project_name', 'Greenpeace DMAIC')}")
