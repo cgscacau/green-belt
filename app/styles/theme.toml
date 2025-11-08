@@ -1,0 +1,21 @@
+# Tema customizado Greenpeace DMAIC
+[theme]
+base = "dark"
+
+# Cores principais
+primaryColor = "#7df9ff"           # Ciano claro
+backgroundColor = "#0b1220"        # Azul muito escuro
+secondaryBackgroundColor = "#111a2e" # Azul escuro
+textColor = "#e8f0ff"              # Branco azulado
+
+# Fontes
+font = "sans serif"
+
+# Configurações adicionais
+[theme.plotly]
+template = "plotly_dark"
+
+[theme.metrics]
+positive_color = "#00ff41"  # Verde
+negative_color = "#ff3131"  # Vermelho
+neutral_color = "#ffff00"   # Amarelo
