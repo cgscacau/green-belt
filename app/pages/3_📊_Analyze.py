@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import json
 import numpy as np
 from scipy import stats
 from datetime import datetime
@@ -59,21 +60,58 @@ def fetch_process_data_from_db(project_name):
 
 # Função para salvar análises no Supabase
 def save_analysis_to_db(project_name, analysis_type, results):
-    """Salva resultados da análise no banco de dados"""
+    """Salva resultados da análise no banco de dados com conversão adequada"""
     if not supabase:
         return False
     
     try:
+        # Função auxiliar para converter tipos NumPy/Pandas para tipos Python nativos
+        def convert_to_serializable(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, pd.DataFrame):
+                return obj.to_dict('records')
+            elif isinstance(obj, pd.Series):
+                return obj.to_dict()
+            elif isinstance(obj, dict):
+                return {key: convert_to_serializable(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_serializable(item) for item in obj]
+            elif isinstance(obj, (np.bool_, bool)):
+                return bool(obj)
+            elif pd.isna(obj):
+                return None
+            else:
+                return obj
+        
+        # Converter os resultados
+        serializable_results = convert_to_serializable(results)
+        
+        # Preparar dados para inserção
         data = {
             'project_name': project_name,
             'analysis_type': analysis_type,
-            'results': results,
+            'results': serializable_results,  # JSONB field
             'created_at': datetime.now().isoformat()
         }
+        
         response = supabase.table('analyses').insert(data).execute()
         return True
+        
     except Exception as e:
         st.error(f"Erro ao salvar análise: {str(e)}")
+        # Debug - mostrar tipo do objeto problemático
+        if "not JSON serializable" in str(e):
+            st.error("Problema com serialização JSON. Verificando tipos de dados...")
+            with st.expander("Debug - Ver dados"):
+                st.write("Tipo do objeto:", type(results))
+                if isinstance(results, dict):
+                    for key, value in results.items():
+                        st.write(f"{key}: {type(value)}")
         return False
 
 # Título e descrição
