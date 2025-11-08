@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import os
-from supabase import create_client, Client
 import json
+from supabase import create_client, Client
 
 # Configuração da página
 st.set_page_config(
@@ -12,18 +12,33 @@ st.set_page_config(
     layout="wide"
 )
 
+# ========================= FUNÇÕES AUXILIARES =========================
+
 # Inicializar Supabase
 @st.cache_resource
 def init_supabase():
-    url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_KEY", "")
-    if url and key:
-        return create_client(url, key)
-    return None
+    """Inicializa conexão com Supabase"""
+    try:
+        # Tentar pegar das secrets do Streamlit primeiro
+        if "supabase" in st.secrets:
+            url = st.secrets["supabase"]["url"]
+            key = st.secrets["supabase"]["key"]
+        else:
+            # Fallback para variáveis de ambiente
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_KEY", "")
+        
+        if url and key:
+            return create_client(url, key)
+        return None
+    except Exception as e:
+        st.error(f"Erro ao conectar com Supabase: {str(e)}")
+        return None
 
+# Inicializar conexão
 supabase = init_supabase()
 
-# Função para salvar projeto no banco
+# Função para salvar projeto
 def save_project_to_db(project_data):
     """Salva ou atualiza projeto no banco de dados"""
     if not supabase:
@@ -35,9 +50,12 @@ def save_project_to_db(project_data):
         
         if existing.data:
             # Atualizar projeto existente
+            project_data['updated_at'] = datetime.now().isoformat()
             response = supabase.table('projects').update(project_data).eq('project_name', project_data['project_name']).execute()
         else:
             # Criar novo projeto
+            project_data['created_at'] = datetime.now().isoformat()
+            project_data['updated_at'] = datetime.now().isoformat()
             response = supabase.table('projects').insert(project_data).execute()
         
         return True
@@ -45,7 +63,7 @@ def save_project_to_db(project_data):
         st.error(f"Erro ao salvar projeto: {str(e)}")
         return False
 
-# Função para carregar projetos do banco
+# Função para carregar projetos
 @st.cache_data(ttl=300)
 def load_projects_from_db():
     """Carrega lista de projetos do banco de dados"""
@@ -53,7 +71,7 @@ def load_projects_from_db():
         return []
     
     try:
-        response = supabase.table('projects').select("project_name, created_at").execute()
+        response = supabase.table('projects').select("project_name, created_at, project_leader, status").execute()
         if response.data:
             return response.data
         return []
@@ -61,9 +79,9 @@ def load_projects_from_db():
         st.error(f"Erro ao carregar projetos: {str(e)}")
         return []
 
-# Função para carregar projeto específico
+# Função para carregar detalhes do projeto
 def load_project_details(project_name):
-    """Carrega detalhes de um projeto específico"""
+    """Carrega detalhes completos de um projeto"""
     if not supabase:
         return None
     
@@ -76,185 +94,336 @@ def load_project_details(project_name):
         st.error(f"Erro ao carregar detalhes do projeto: {str(e)}")
         return None
 
+# Função para criar DataFrame SIPOC
+def create_sipoc_dataframe(suppliers, inputs, process, outputs, customers):
+    """Cria DataFrame do SIPOC com tratamento robusto"""
+    try:
+        # Processar cada campo
+        def process_field(field):
+            if field and field.strip():
+                items = [item.strip() for item in field.split('\n') if item.strip()]
+                return items
+            return []
+        
+        # Criar listas processadas
+        data = {
+            'Suppliers': process_field(suppliers),
+            'Inputs': process_field(inputs),
+            'Process': process_field(process),
+            'Outputs': process_field(outputs),
+            'Customers': process_field(customers)
+        }
+        
+        # Se todas vazias, retornar DataFrame vazio
+        if all(len(v) == 0 for v in data.values()):
+            return pd.DataFrame(columns=['Suppliers', 'Inputs', 'Process', 'Outputs', 'Customers'])
+        
+        # Encontrar tamanho máximo
+        max_length = max(len(v) for v in data.values())
+        
+        # Padronizar tamanhos
+        for key in data:
+            current_length = len(data[key])
+            if current_length < max_length:
+                data[key].extend([''] * (max_length - current_length))
+        
+        return pd.DataFrame(data)
+        
+    except Exception as e:
+        st.error(f"Erro ao criar DataFrame: {str(e)}")
+        return pd.DataFrame()
+
+# Função para carregar VOCs do banco
+def load_voc_items(project_name):
+    """Carrega VOC items do banco de dados"""
+    if not supabase:
+        return []
+    
+    try:
+        response = supabase.table('voc_items').select("*").eq('project_name', project_name).execute()
+        if response.data:
+            return response.data
+        return []
+    except Exception as e:
+        st.error(f"Erro ao carregar VOCs: {str(e)}")
+        return []
+
+# Função para carregar SIPOC do banco
+def load_sipoc(project_name):
+    """Carrega SIPOC do banco de dados"""
+    if not supabase:
+        return None
+    
+    try:
+        response = supabase.table('sipoc').select("*").eq('project_name', project_name).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar SIPOC: {str(e)}")
+        return None
+
+# ========================= INTERFACE PRINCIPAL =========================
+
 # Título e descrição
 st.title("📋 Define — Definição do Projeto")
 st.markdown("Defina claramente o problema, escopo e objetivos do projeto Lean Six Sigma")
 
-# Sidebar para seleção/criação de projeto
+# ========================= SIDEBAR =========================
+
 with st.sidebar:
     st.header("🗂️ Gerenciar Projetos")
     
-    # Opção de criar novo ou selecionar existente
+    # Verificar conexão com Supabase
+    if not supabase:
+        st.error("⚠️ Supabase não configurado")
+        st.info("Configure as variáveis SUPABASE_URL e SUPABASE_KEY")
+        use_local = st.checkbox("Usar armazenamento local (sessão)")
+    else:
+        use_local = False
+        st.success("✅ Conectado ao Supabase")
+    
+    st.divider()
+    
+    # Opções de projeto
     project_mode = st.radio(
         "Escolha uma opção:",
-        ["Criar Novo Projeto", "Selecionar Projeto Existente"]
+        ["Criar Novo Projeto", "Selecionar Projeto Existente"],
+        key="project_mode_radio"
     )
     
     if project_mode == "Selecionar Projeto Existente":
-        projects = load_projects_from_db()
-        
-        if projects:
-            project_names = [p['project_name'] for p in projects]
-            selected_project = st.selectbox(
-                "Selecione um projeto:",
-                [""] + project_names
-            )
+        if supabase:
+            projects = load_projects_from_db()
             
-            if selected_project and st.button("Carregar Projeto", type="primary"):
-                project_details = load_project_details(selected_project)
-                if project_details:
-                    # Carregar dados no session_state
-                    st.session_state.project_name = selected_project
-                    st.session_state.project_data = project_details
-                    st.success(f"✅ Projeto '{selected_project}' carregado!")
-                    st.rerun()
+            if projects:
+                # Criar DataFrame para melhor visualização
+                projects_df = pd.DataFrame(projects)
+                project_names = projects_df['project_name'].tolist()
+                
+                selected_project = st.selectbox(
+                    "Selecione um projeto:",
+                    [""] + project_names,
+                    key="project_selector"
+                )
+                
+                if selected_project:
+                    # Mostrar detalhes do projeto selecionado
+                    project_info = projects_df[projects_df['project_name'] == selected_project].iloc[0]
+                    st.info(f"**Líder:** {project_info.get('project_leader', 'N/A')}")
+                    st.info(f"**Status:** {project_info.get('status', 'active')}")
+                    
+                    if st.button("📂 Carregar Projeto", type="primary"):
+                        project_details = load_project_details(selected_project)
+                        if project_details:
+                            st.session_state.project_name = selected_project
+                            st.session_state.project_data = project_details
+                            
+                            # Carregar VOCs e SIPOC
+                            voc_items = load_voc_items(selected_project)
+                            if voc_items:
+                                st.session_state.voc_items = voc_items
+                            
+                            sipoc_data = load_sipoc(selected_project)
+                            if sipoc_data:
+                                st.session_state.sipoc_suppliers = sipoc_data.get('suppliers', '')
+                                st.session_state.sipoc_inputs = sipoc_data.get('inputs', '')
+                                st.session_state.sipoc_process = sipoc_data.get('process', '')
+                                st.session_state.sipoc_outputs = sipoc_data.get('outputs', '')
+                                st.session_state.sipoc_customers = sipoc_data.get('customers', '')
+                            
+                            st.success(f"✅ Projeto '{selected_project}' carregado!")
+                            st.rerun()
+            else:
+                st.info("Nenhum projeto encontrado")
         else:
-            st.info("Nenhum projeto encontrado. Crie um novo projeto.")
+            st.warning("Modo local: histórico não disponível")
     
-    # Mostrar projeto atual
+    # Mostrar projeto ativo
     if 'project_name' in st.session_state:
         st.divider()
-        st.success(f"📁 Projeto Ativo: **{st.session_state.project_name}**")
+        st.success(f"📁 **Projeto Ativo:**")
+        st.write(f"_{st.session_state.project_name}_")
         
-        if st.button("🔄 Desselecionar Projeto"):
-            del st.session_state.project_name
-            if 'project_data' in st.session_state:
-                del st.session_state.project_data
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Trocar", use_container_width=True):
+                for key in ['project_name', 'project_data', 'voc_items']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
+        with col2:
+            if st.button("🗑️ Excluir", use_container_width=True):
+                if supabase and st.session_state.get('confirm_delete'):
+                    try:
+                        supabase.table('projects').delete().eq('project_name', st.session_state.project_name).execute()
+                        st.success("Projeto excluído!")
+                        for key in list(st.session_state.keys()):
+                            if 'project' in key or 'sipoc' in key or 'voc' in key:
+                                del st.session_state[key]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro: {str(e)}")
+                else:
+                    st.session_state.confirm_delete = True
+                    st.warning("Clique novamente para confirmar")
 
-# Verificar se há projeto selecionado ou sendo criado
+# ========================= CONTEÚDO PRINCIPAL =========================
+
+# Verificar se há projeto ativo ou sendo criado
 if project_mode == "Criar Novo Projeto" or 'project_name' in st.session_state:
     
     # Tabs principais
     tab1, tab2, tab3, tab4 = st.tabs([
-        "Project Charter",
-        "Voice of Customer (VOC)",
-        "SIPOC Diagram",
-        "Resumo do Projeto"
+        "📝 Project Charter",
+        "🗣️ Voice of Customer (VOC)",
+        "🔄 SIPOC Diagram",
+        "📊 Resumo do Projeto"
     ])
     
-    # Tab 1: Project Charter
+    # ========================= TAB 1: PROJECT CHARTER =========================
+    
     with tab1:
         st.header("Project Charter")
         
-        with st.form("project_charter"):
+        # Carregar dados existentes
+        existing_data = st.session_state.get('project_data', {})
+        
+        with st.form("project_charter_form", clear_on_submit=False):
+            # Informações Básicas
+            st.subheader("📌 Informações Básicas")
             col1, col2 = st.columns(2)
             
             with col1:
-                # Carregar dados existentes se houver
-                existing_data = st.session_state.get('project_data', {})
-                
                 project_name = st.text_input(
-                    "Nome do Projeto*",
+                    "Nome do Projeto *",
                     value=st.session_state.get('project_name', existing_data.get('project_name', '')),
-                    disabled='project_name' in st.session_state and project_mode != "Criar Novo Projeto"
+                    disabled='project_name' in st.session_state and project_mode != "Criar Novo Projeto",
+                    help="Nome único para identificar o projeto"
                 )
                 
-                problem_statement = st.text_area(
-                    "Declaração do Problema*",
-                    value=existing_data.get('problem_statement', ''),
-                    height=150,
-                    help="Descreva claramente o problema que será resolvido"
+                project_leader = st.text_input(
+                    "Líder do Projeto *",
+                    value=existing_data.get('project_leader', ''),
+                    help="Green Belt ou Black Belt responsável"
                 )
                 
-                business_case = st.text_area(
-                    "Business Case*",
-                    value=existing_data.get('business_case', ''),
-                    height=150,
-                    help="Justifique a importância do projeto para o negócio"
-                )
-                
-                project_scope = st.text_area(
-                    "Escopo do Projeto*",
-                    value=existing_data.get('project_scope', ''),
-                    height=100,
-                    help="Defina o que está incluído e excluído do projeto"
+                project_sponsor = st.text_input(
+                    "Sponsor do Projeto",
+                    value=existing_data.get('project_sponsor', ''),
+                    help="Patrocinador executivo do projeto"
                 )
             
             with col2:
-                goal_statement = st.text_area(
-                    "Declaração da Meta*",
-                    value=existing_data.get('goal_statement', ''),
-                    height=150,
-                    help="Defina a meta SMART do projeto"
-                )
-                
-                # Datas
                 col_date1, col_date2 = st.columns(2)
                 with col_date1:
                     start_date = st.date_input(
                         "Data de Início",
-                        value=pd.to_datetime(existing_data.get('start_date', datetime.now())).date() if existing_data.get('start_date') else datetime.now().date()
+                        value=pd.to_datetime(existing_data.get('start_date')).date() if existing_data.get('start_date') else datetime.now().date()
                     )
                 
                 with col_date2:
                     end_date = st.date_input(
                         "Data de Término",
-                        value=pd.to_datetime(existing_data.get('end_date', datetime.now())).date() if existing_data.get('end_date') else None
+                        value=pd.to_datetime(existing_data.get('end_date')).date() if existing_data.get('end_date') else None
                     )
                 
-                # Equipe
                 team_members = st.text_area(
                     "Membros da Equipe",
                     value=existing_data.get('team_members', ''),
-                    height=100,
+                    height=80,
                     help="Liste os membros da equipe (um por linha)"
                 )
-                
-                project_sponsor = st.text_input(
-                    "Sponsor do Projeto",
-                    value=existing_data.get('project_sponsor', '')
+            
+            # Definição do Problema
+            st.subheader("🎯 Definição do Problema e Objetivos")
+            
+            problem_statement = st.text_area(
+                "Declaração do Problema *",
+                value=existing_data.get('problem_statement', ''),
+                height=120,
+                help="Descreva o problema de forma clara e específica. Use dados quando possível."
+            )
+            
+            goal_statement = st.text_area(
+                "Declaração da Meta *",
+                value=existing_data.get('goal_statement', ''),
+                height=120,
+                help="Defina uma meta SMART (Específica, Mensurável, Atingível, Relevante, Temporal)"
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                business_case = st.text_area(
+                    "Business Case *",
+                    value=existing_data.get('business_case', ''),
+                    height=100,
+                    help="Por que este projeto é importante para o negócio?"
                 )
-                
-                project_leader = st.text_input(
-                    "Líder do Projeto*",
-                    value=existing_data.get('project_leader', '')
+            
+            with col2:
+                project_scope = st.text_area(
+                    "Escopo do Projeto",
+                    value=existing_data.get('project_scope', ''),
+                    height=100,
+                    help="O que está incluído e excluído do projeto"
                 )
             
             # Métricas
-            st.subheader("Métricas do Projeto")
-            col_metric1, col_metric2 = st.columns(2)
+            st.subheader("📈 Métricas e Metas")
+            col1, col2, col3, col4 = st.columns(4)
             
-            with col_metric1:
+            with col1:
                 primary_metric = st.text_input(
                     "Métrica Primária (Y)",
                     value=existing_data.get('primary_metric', ''),
-                    help="Principal indicador a ser melhorado"
+                    help="KPI principal a ser melhorado"
                 )
-                
+            
+            with col2:
                 baseline_value = st.number_input(
                     "Valor Baseline",
                     value=float(existing_data.get('baseline_value', 0)) if existing_data.get('baseline_value') else 0.0,
-                    format="%.2f"
+                    format="%.2f",
+                    help="Valor atual da métrica"
                 )
             
-            with col_metric2:
+            with col3:
                 target_value = st.number_input(
                     "Valor Meta",
                     value=float(existing_data.get('target_value', 0)) if existing_data.get('target_value') else 0.0,
-                    format="%.2f"
+                    format="%.2f",
+                    help="Valor desejado da métrica"
                 )
-                
+            
+            with col4:
                 expected_savings = st.number_input(
                     "Economia Esperada (R$)",
                     value=float(existing_data.get('expected_savings', 0)) if existing_data.get('expected_savings') else 0.0,
-                    format="%.2f"
+                    format="%.2f",
+                    help="Benefício financeiro esperado"
                 )
             
-            submitted = st.form_submit_button("💾 Salvar Project Charter", type="primary")
+            # Botões de ação
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                submitted = st.form_submit_button("💾 Salvar Project Charter", type="primary", use_container_width=True)
+            with col2:
+                clear_form = st.form_submit_button("🔄 Limpar", use_container_width=True)
             
             if submitted:
-                if not project_name or not problem_statement or not goal_statement or not project_leader:
-                    st.error("Por favor, preencha todos os campos obrigatórios (*)")
+                # Validação
+                if not all([project_name, problem_statement, goal_statement, project_leader, business_case]):
+                    st.error("❌ Por favor, preencha todos os campos obrigatórios (*)")
                 else:
-                    # Preparar dados do projeto
+                    # Preparar dados
                     project_data = {
                         'project_name': project_name,
                         'problem_statement': problem_statement,
                         'business_case': business_case,
                         'project_scope': project_scope,
                         'goal_statement': goal_statement,
-                        'start_date': start_date.isoformat(),
+                        'start_date': start_date.isoformat() if start_date else None,
                         'end_date': end_date.isoformat() if end_date else None,
                         'team_members': team_members,
                         'project_sponsor': project_sponsor,
@@ -263,8 +432,7 @@ if project_mode == "Criar Novo Projeto" or 'project_name' in st.session_state:
                         'baseline_value': baseline_value,
                         'target_value': target_value,
                         'expected_savings': expected_savings,
-                        'created_at': datetime.now().isoformat(),
-                        'updated_at': datetime.now().isoformat()
+                        'status': 'active'
                     }
                     
                     # Salvar no session_state
@@ -272,427 +440,95 @@ if project_mode == "Criar Novo Projeto" or 'project_name' in st.session_state:
                     st.session_state.project_data = project_data
                     st.session_state.problem_statement = problem_statement
                     
-                    # Salvar no banco de dados
-                    if save_project_to_db(project_data):
-                        st.success(f"✅ Project Charter salvo com sucesso! Projeto '{project_name}' está ativo.")
-                        st.balloons()
+                    # Salvar no banco
+                    if supabase:
+                        if save_project_to_db(project_data):
+                            st.success("✅ Project Charter salvo com sucesso!")
+                            st.balloons()
+                        else:
+                            st.warning("⚠️ Erro ao salvar no banco, dados salvos localmente")
                     else:
-                        st.warning("⚠️ Project Charter salvo localmente, mas não foi possível salvar no banco de dados.")
+                        st.success("✅ Project Charter salvo localmente!")
+                    
+                    st.rerun()
+            
+            if clear_form:
+                for key in list(st.session_state.keys()):
+                    if 'project' in key:
+                        del st.session_state[key]
+                st.rerun()
     
-    # Tab 2: Voice of Customer
+    # ========================= TAB 2: VOC =========================
+    
     with tab2:
         st.header("Voice of Customer (VOC)")
         
-        # Verificar se há projeto ativo
         if 'project_name' not in st.session_state:
-            st.warning("⚠️ Por favor, crie ou selecione um projeto primeiro na aba 'Project Charter'")
+            st.warning("⚠️ Por favor, complete o Project Charter primeiro")
         else:
-            st.info(f"📁 Adicionando VOC ao projeto: **{st.session_state.project_name}**")
+            st.info(f"📁 Projeto: **{st.session_state.project_name}**")
             
-            # Formulário VOC
-            with st.form("voc_form"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    customer_segment = st.text_input("Segmento de Cliente")
-                    customer_need = st.text_area("Necessidade do Cliente", height=100)
-                    current_performance = st.text_area("Performance Atual", height=100)
-                
-                with col2:
-                    priority = st.select_slider(
-                        "Prioridade",
-                        options=["Baixa", "Média", "Alta", "Crítica"]
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                # Formulário VOC
+                with st.form("voc_form", clear_on_submit=True):
+                    st.subheader("Adicionar VOC")
+                    
+                    col_voc1, col_voc2 = st.columns(2)
+                    
+                    with col_voc1:
+                        customer_segment = st.text_input("Segmento de Cliente *")
+                        customer_need = st.text_area("Necessidade do Cliente *", height=80)
+                        current_performance = st.text_area("Performance Atual", height=80)
+                    
+                    with col_voc2:
+                        priority = st.select_slider(
+                            "Prioridade",
+                            options=["Baixa", "Média", "Alta", "Crítica"],
+                            value="Média"
+                        )
+                        
+                        csat_score = st.slider("Satisfação Atual", 1, 10, 5)
+                        target_csat = st.slider("Satisfação Desejada", 1, 10, 8)
+                    
+                    ctq = st.text_area(
+                        "Critical to Quality (CTQ)",
+                        height=80,
+                        help="Requisitos mensuráveis derivados da voz do cliente"
                     )
                     
-                    csat_score = st.slider(
-                        "Score de Satisfação Atual",
-                        min_value=1,
-                        max_value=10,
-                        value=5
-                    )
+                    submitted_voc = st.form_submit_button("➕ Adicionar VOC", type="primary")
                     
-                    target_csat = st.slider(
-                        "Score de Satisfação Desejado",
-                        min_value=1,
-                        max_value=10,
-                        value=8
-                    )
-                
-                ctq = st.text_area(
-                    "Critical to Quality (CTQ)",
-                    height=100,
-                    help="Traduza a voz do cliente em requisitos mensuráveis"
-                )
-                
-                submitted_voc = st.form_submit_button("➕ Adicionar VOC")
-                
-                if submitted_voc:
-                    if customer_segment and customer_need:
-                        # Inicializar lista VOC se não existir
-                        if 'voc_items' not in st.session_state:
-                            st.session_state.voc_items = []
-                        
-                        # Adicionar novo item
-                        voc_item = {
-                            'timestamp': datetime.now().isoformat(),
-                            'customer_segment': customer_segment,
-                            'customer_need': customer_need,
-                            'current_performance': current_performance,
-                            'priority': priority,
-                            'csat_score': csat_score,
-                            'target_csat': target_csat,
-                            'ctq': ctq
-                        }
-                        
-                        st.session_state.voc_items.append(voc_item)
-                        
-                        # Salvar no banco
-                        if supabase:
-                            try:
-                                voc_data = {
-                                    'project_name': st.session_state.project_name,
-                                    'voc_data': voc_item,
-                                    'created_at': datetime.now().isoformat()
-                                }
-                                supabase.table('voc_items').insert(voc_data).execute()
-                                st.success("✅ VOC adicionado com sucesso!")
-                            except Exception as e:
-                                st.error(f"Erro ao salvar VOC: {str(e)}")
-                        else:
-                            st.success("✅ VOC adicionado localmente!")
-                        
-                        st.rerun()
-                    else:
-                        st.error("Por favor, preencha pelo menos o segmento e a necessidade do cliente")
-            
-            # Exibir VOCs cadastrados
-            if 'voc_items' in st.session_state and st.session_state.voc_items:
-                st.subheader("VOCs Cadastrados")
-                
-                voc_df = pd.DataFrame(st.session_state.voc_items)
-                
-                # Filtros
-                col1, col2 = st.columns(2)
-                with col1:
-                    filter_priority = st.multiselect(
-                        "Filtrar por Prioridade",
-                        options=["Baixa", "Média", "Alta", "Crítica"],
-                        default=["Alta", "Crítica"]
-                    )
-                
-                # Aplicar filtros
-                if filter_priority:
-                    filtered_df = voc_df[voc_df['priority'].isin(filter_priority)]
-                else:
-                    filtered_df = voc_df
-                
-                # Exibir tabela
-                st.dataframe(
-                    filtered_df[['customer_segment', 'customer_need', 'priority', 'csat_score', 'target_csat', 'ctq']],
-                    use_container_width=True
-                )
-                
-                # Métricas resumidas
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total de VOCs", len(voc_df))
-                with col2:
-                    st.metric("VOCs Críticos", len(voc_df[voc_df['priority'] == 'Crítica']))
-                with col3:
-                    avg_gap = (filtered_df['target_csat'] - filtered_df['csat_score']).mean()
-                    st.metric("Gap Médio de Satisfação", f"{avg_gap:.1f}")
-            else:
-                # Tentar carregar do banco se não houver no session_state
-                if supabase:
-                    try:
-                        voc_response = supabase.table('voc_items').select("*").eq('project_name', st.session_state.project_name).execute()
-                        if voc_response.data:
-                            st.session_state.voc_items = [item['voc_data'] for item in voc_response.data]
+                    if submitted_voc:
+                        if customer_segment and customer_need:
+                            # Preparar dados
+                            voc_item = {
+                                'project_name': st.session_state.project_name,
+                                'customer_segment': customer_segment,
+                                'customer_need': customer_need,
+                                'current_performance': current_performance,
+                                'priority': priority,
+                                'csat_score': csat_score,
+                                'target_csat': target_csat,
+                                'ctq': ctq
+                            }
+                            
+                            # Salvar no session_state
+                            if 'voc_items' not in st.session_state:
+                                st.session_state.voc_items = []
+                            st.session_state.voc_items.append(voc_item)
+                            
+                            # Salvar no banco
+                            if supabase:
+                                try:
+                                    response = supabase.table('voc_items').insert(voc_item).execute()
+                                    st.success("✅ VOC adicionado com sucesso!")
+                                except Exception as e:
+                                    st.error(f"Erro ao salvar: {str(e)}")
+                            else:
+                                st.success("✅ VOC adicionado localmente!")
+                            
                             st.rerun()
-                    except:
-                        pass
-                
-                st.info("Nenhum VOC cadastrado ainda. Use o formulário acima para adicionar.")
-    
-# Tab 3: SIPOC Diagram
-with tab3:
-    st.header("SIPOC Diagram")
-    
-    if 'project_name' not in st.session_state:
-        st.warning("⚠️ Por favor, crie ou selecione um projeto primeiro na aba 'Project Charter'")
-    else:
-        st.info(f"📁 Criando SIPOC para o projeto: **{st.session_state.project_name}**")
-        
-        # Layout SIPOC
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        with col1:
-            st.subheader("Suppliers")
-            suppliers = st.text_area(
-                "Fornecedores",
-                height=200,
-                help="Liste os fornecedores (um por linha)",
-                value=st.session_state.get('sipoc_suppliers', '')
-            )
-        
-        with col2:
-            st.subheader("Inputs")
-            inputs = st.text_area(
-                "Entradas",
-                height=200,
-                help="Liste as entradas do processo (uma por linha)",
-                value=st.session_state.get('sipoc_inputs', '')
-            )
-        
-        with col3:
-            st.subheader("Process")
-            process = st.text_area(
-                "Processo",
-                height=200,
-                help="Liste as etapas principais do processo (uma por linha)",
-                value=st.session_state.get('sipoc_process', '')
-            )
-        
-        with col4:
-            st.subheader("Outputs")
-            outputs = st.text_area(
-                "Saídas",
-                height=200,
-                help="Liste as saídas do processo (uma por linha)",
-                value=st.session_state.get('sipoc_outputs', '')
-            )
-        
-        with col5:
-            st.subheader("Customers")
-            customers = st.text_area(
-                "Clientes",
-                height=200,
-                help="Liste os clientes (um por linha)",
-                value=st.session_state.get('sipoc_customers', '')
-            )
-        
-        # Botão para salvar SIPOC
-        if st.button("💾 Salvar SIPOC", type="primary"):
-            # Salvar no session_state
-            st.session_state.sipoc_suppliers = suppliers
-            st.session_state.sipoc_inputs = inputs
-            st.session_state.sipoc_process = process
-            st.session_state.sipoc_outputs = outputs
-            st.session_state.sipoc_customers = customers
-            
-            # Salvar no banco
-            if supabase:
-                try:
-                    sipoc_record = {
-                        'project_name': st.session_state.project_name,
-                        'suppliers': suppliers,
-                        'inputs': inputs,
-                        'process': process,
-                        'outputs': outputs,
-                        'customers': customers
-                    }
-                    
-                    # Verificar se já existe
-                    existing = supabase.table('sipoc').select("*").eq('project_name', st.session_state.project_name).execute()
-                    
-                    if existing.data:
-                        response = supabase.table('sipoc').update(sipoc_record).eq('project_name', st.session_state.project_name).execute()
-                    else:
-                        response = supabase.table('sipoc').insert(sipoc_record).execute()
-                    
-                    st.success("✅ SIPOC salvo com sucesso!")
-                except Exception as e:
-                    st.error(f"Erro ao salvar SIPOC: {str(e)}")
-            else:
-                st.success("✅ SIPOC salvo localmente!")
-        
-        # Visualização do SIPOC - CORREÇÃO AQUI
-        if any([suppliers, inputs, process, outputs, customers]):
-            st.divider()
-            st.subheader("Visualização do SIPOC")
-            
-            # Criar listas a partir dos text areas
-            suppliers_list = [s.strip() for s in suppliers.split('\n') if s.strip()] if suppliers else []
-            inputs_list = [i.strip() for i in inputs.split('\n') if i.strip()] if inputs else []
-            process_list = [p.strip() for p in process.split('\n') if p.strip()] if process else []
-            outputs_list = [o.strip() for o in outputs.split('\n') if o.strip()] if outputs else []
-            customers_list = [c.strip() for c in customers.split('\n') if c.strip()] if customers else []
-            
-            # Encontrar o tamanho máximo
-            max_len = max(
-                len(suppliers_list),
-                len(inputs_list),
-                len(process_list),
-                len(outputs_list),
-                len(customers_list),
-                1  # Garantir pelo menos 1 linha
-            )
-            
-            # Padronizar o tamanho de todas as listas
-            def pad_list(lst, size):
-                """Preenche lista com strings vazias até o tamanho desejado"""
-                return lst + [''] * (size - len(lst))
-            
-            # Criar DataFrame com listas padronizadas
-            sipoc_viz = pd.DataFrame({
-                'Suppliers': pad_list(suppliers_list, max_len),
-                'Inputs': pad_list(inputs_list, max_len),
-                'Process': pad_list(process_list, max_len),
-                'Outputs': pad_list(outputs_list, max_len),
-                'Customers': pad_list(customers_list, max_len)
-            })
-            
-            # Exibir tabela
-            st.dataframe(sipoc_viz, use_container_width=True, hide_index=True)
-            
-            # Métricas do SIPOC
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                st.metric("Fornecedores", len(suppliers_list))
-            with col2:
-                st.metric("Entradas", len(inputs_list))
-            with col3:
-                st.metric("Processos", len(process_list))
-            with col4:
-                st.metric("Saídas", len(outputs_list))
-            with col5:
-                st.metric("Clientes", len(customers_list))
-            
-            # Opção de download do SIPOC
-            if st.button("📥 Exportar SIPOC como CSV"):
-                csv = sipoc_viz.to_csv(index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name=f"sipoc_{st.session_state.project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-
-    
-    # Tab 4: Resumo do Projeto
-    with tab4:
-        st.header("📊 Resumo do Projeto")
-        
-        if 'project_name' in st.session_state:
-            st.success(f"📁 Projeto Ativo: **{st.session_state.project_name}**")
-            
-            # Métricas principais
-            col1, col2, col3, col4 = st.columns(4)
-            
-            project_data = st.session_state.get('project_data', {})
-            
-            with col1:
-                st.metric("Líder do Projeto", project_data.get('project_leader', 'Não definido'))
-            
-            with col2:
-                if project_data.get('start_date'):
-                    st.metric("Data de Início", project_data.get('start_date', 'Não definida'))
-            
-            with col3:
-                if project_data.get('baseline_value') and project_data.get('target_value'):
-                    improvement = ((project_data.get('target_value', 0) - project_data.get('baseline_value', 0)) / 
-                                 project_data.get('baseline_value', 1)) * 100
-                    st.metric("Melhoria Esperada", f"{improvement:.1f}%")
-            
-            with col4:
-                if project_data.get('expected_savings'):
-                    st.metric("Economia Esperada", f"R$ {project_data.get('expected_savings', 0):,.2f}")
-            
-            # Detalhes do projeto
-            st.divider()
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("📝 Declaração do Problema")
-                st.info(project_data.get('problem_statement', 'Não definido'))
-                
-                st.subheader("🎯 Meta do Projeto")
-                st.success(project_data.get('goal_statement', 'Não definida'))
-            
-            with col2:
-                st.subheader("💼 Business Case")
-                st.info(project_data.get('business_case', 'Não definido'))
-                
-                st.subheader("📏 Escopo")
-                st.warning(project_data.get('project_scope', 'Não definido'))
-            
-            # Status dos componentes
-            st.divider()
-            st.subheader("✅ Checklist de Definição")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.write("**Project Charter**")
-                charter_complete = all([
-                    project_data.get('project_name'),
-                    project_data.get('problem_statement'),
-                    project_data.get('goal_statement'),
-                    project_data.get('project_leader')
-                ])
-                if charter_complete:
-                    st.success("✅ Completo")
-                else:
-                    st.error("❌ Incompleto")
-            
-            with col2:
-                st.write("**Voice of Customer**")
-                voc_complete = 'voc_items' in st.session_state and len(st.session_state.voc_items) > 0
-                if voc_complete:
-                    st.success(f"✅ {len(st.session_state.voc_items)} VOCs")
-                else:
-                    st.error("❌ Nenhum VOC")
-            
-            with col3:
-                st.write("**SIPOC Diagram**")
-                sipoc_complete = any([
-                    st.session_state.get('sipoc_suppliers'),
-                    st.session_state.get('sipoc_process'),
-                    st.session_state.get('sipoc_customers')
-                ])
-                if sipoc_complete:
-                    st.success("✅ Completo")
-                else:
-                    st.error("❌ Incompleto")
-            
-            # Botão para exportar resumo
-            st.divider()
-            if st.button("📥 Exportar Resumo do Projeto"):
-                export_data = {
-                    'project_charter': project_data,
-                    'voc_items': st.session_state.get('voc_items', []),
-                    'sipoc': {
-                        'suppliers': st.session_state.get('sipoc_suppliers', ''),
-                        'inputs': st.session_state.get('sipoc_inputs', ''),
-                        'process': st.session_state.get('sipoc_process', ''),
-                        'outputs': st.session_state.get('sipoc_outputs', ''),
-                        'customers': st.session_state.get('sipoc_customers', '')
-                    },
-                    'export_date': datetime.now().isoformat()
-                }
-                
-                st.download_button(
-                    label="Download JSON",
-                    data=json.dumps(export_data, indent=2),
-                    file_name=f"projeto_{st.session_state.project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
-                )
-            
-            # Aviso para próxima fase
-            if charter_complete and voc_complete and sipoc_complete:
-                st.divider()
-                st.success("🎉 **Fase Define completa!** Você pode prosseguir para a fase Measure.")
-                st.balloons()
-            else:
-                st.divider()
-                st.warning("⚠️ Complete todos os componentes da fase Define antes de prosseguir para Measure.")
-        else:
-            st.warning("⚠️ Nenhum projeto ativo. Crie ou selecione um projeto.")
-
-else:
-    st.info("👈 Use a barra lateral para criar um novo projeto ou selecionar um existente.")
-
-# Footer
-st.divider()
-st.caption("💡 **Dica:** Complete todos os campos obrigatórios do Project Charter para estabelecer uma base sólida para seu projeto.")
+                        else:
+                            st.error("Preencha os<span class="cursor">█</span>
