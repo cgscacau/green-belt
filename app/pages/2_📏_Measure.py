@@ -1,14 +1,36 @@
 import streamlit as st
 import pandas as pd
+import numpy as np  # se necessário
 from pathlib import Path
-from app.components.upload_and_store import (
-    init_catalog, save_upload, load_table_from_path, 
-    curate_table, list_datasets, RESULTS
-)
-from app.components.stats_blocks import desc_stats, detect_outliers
-from app.components.visual_blocks import histogram_with_stats, box_by_group
-from app.components.data_catalog import show_catalog
-from app.components.reports import render_html_report, save_analysis_manifest
+from datetime import datetime  # se necessário
+import sys
+
+# Adiciona o diretório app ao path
+current_dir = Path(__file__).parent
+parent_dir = current_dir.parent
+sys.path.insert(0, str(parent_dir))
+
+try:
+    from components.upload_and_store import (
+        init_catalog, save_upload, load_table_from_path, 
+        curate_table, list_datasets, load_dataset, RESULTS
+    )
+    from components.stats_blocks import (
+        desc_stats, detect_outliers, shapiro_test, 
+        ttest_two_groups, anova_test, correlation_analysis, 
+        ols_regression, levene_test, process_capability
+    )
+    from components.visual_blocks import (
+        line_over_time, box_by_group, histogram_with_stats,
+        scatter_with_regression, correlation_heatmap, 
+        control_chart, pareto_chart, qq_plot
+    )
+    from components.data_catalog import show_catalog, dataset_selector
+    from components.reports import render_html_report, save_analysis_manifest
+except ImportError as e:
+    st.error(f"Erro ao importar componentes: {e}")
+    st.info("Verifique se todos os arquivos de componentes estão presentes.")
+    st.stop()
 
 st.set_page_config(page_title="Measure", page_icon="📏", layout="wide")
 init_catalog()
