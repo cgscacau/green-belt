@@ -244,11 +244,67 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Dashboard"
 ])
 
-# ========================= TAB 1: BRAINSTORMING =========================
+# ========================= TAB 1: BRAINSTORMING (CORRIGIDO) =========================
 
 with tab1:
     st.header("💡 Sessão de Brainstorming")
     st.markdown("Gere e organize ideias de melhoria baseadas nas análises realizadas")
+    
+    # Funções para gerenciar ideias de brainstorming
+    def save_brainstorm_idea(project_name, idea_data):
+        """Salva ideia de brainstorming no banco"""
+        if not supabase:
+            return False
+        
+        try:
+            idea_data['project_name'] = project_name
+            idea_data['created_at'] = datetime.now().isoformat()
+            
+            response = supabase.table('brainstorm_ideas').insert(idea_data).execute()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao salvar ideia: {str(e)}")
+            return False
+    
+    def load_brainstorm_ideas(project_name):
+        """Carrega ideias de brainstorming do projeto"""
+        if not supabase:
+            return None
+        
+        try:
+            response = supabase.table('brainstorm_ideas').select("*").eq('project_name', project_name).order('created_at', desc=True).execute()
+            if response.data:
+                return pd.DataFrame(response.data)
+            return None
+        except Exception as e:
+            st.error(f"Erro ao carregar ideias: {str(e)}")
+            return None
+    
+    def update_idea_status(idea_id, new_status):
+        """Atualiza status de uma ideia"""
+        if not supabase:
+            return False
+        
+        try:
+            response = supabase.table('brainstorm_ideas').update({
+                'status': new_status
+            }).eq('id', idea_id).execute()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao atualizar status: {str(e)}")
+            return False
+    
+    def delete_brainstorm_idea(idea_id):
+        """Exclui uma ideia"""
+        if not supabase:
+            return False
+        
+        try:
+            response = supabase.table('brainstorm_ideas').delete().eq('id', idea_id).execute()
+            return True
+        except Exception as e:
+            st.error(f"Erro ao excluir ideia: {str(e)}")
+            return False
     
     col1, col2 = st.columns([2, 1])
     
@@ -283,31 +339,35 @@ with tab1:
             benefits = st.text_area("Benefícios Esperados", height=80)
             risks = st.text_area("Riscos Potenciais", height=80)
             
-            submitted = st.form_submit_button("➕ Adicionar Ideia", type="primary")
+            submitted = st.form_submit_button("💾 Salvar Ideia", type="primary")
             
             if submitted:
                 if idea_title and idea_description:
-                    # Adicionar ao session_state
-                    if 'brainstorm_ideas' not in st.session_state:
-                        st.session_state.brainstorm_ideas = []
-                    
                     idea = {
                         'title': idea_title,
                         'description': idea_description,
                         'category': category,
-                        'impact': expected_impact,
-                        'effort': implementation_effort,
+                        'expected_impact': expected_impact,
+                        'implementation_effort': implementation_effort,
                         'responsible': responsible,
                         'benefits': benefits,
                         'risks': risks,
-                        'timestamp': datetime.now().isoformat()
+                        'status': 'proposed'
                     }
                     
-                    st.session_state.brainstorm_ideas.append(idea)
-                    st.success("✅ Ideia adicionada!")
-                    st.rerun()
+                    # Salvar no banco de dados
+                    if save_brainstorm_idea(project_name, idea):
+                        st.success("✅ Ideia salva com sucesso no banco de dados!")
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        # Fallback para session_state se falhar
+                        if 'brainstorm_ideas' not in st.session_state:
+                            st.session_state.brainstorm_ideas = []
+                        st.session_state.brainstorm_ideas.append(idea)
+                        st.warning("⚠️ Ideia salva apenas localmente (sessão)")
                 else:
-                    st.error("Preencha os campos obrigatórios")
+                    st.error("❌ Preencha os campos obrigatórios")
     
     with col2:
         st.info("""
@@ -324,17 +384,37 @@ with tab1:
         - Sem julgamentos
         - Construa sobre outras ideias
         - Pense fora da caixa
+        
+        **💾 Dados Salvos:**
+        Todas as ideias são salvas automaticamente no banco de dados do projeto.
         """)
     
-    # Exibir ideias cadastradas
-    if 'brainstorm_ideas' in st.session_state and st.session_state.brainstorm_ideas:
-        st.divider()
-        st.subheader("💭 Ideias Geradas")
+    # Carregar e exibir ideias cadastradas
+    st.divider()
+    st.subheader("💭 Ideias Cadastradas")
+    
+    # Carregar ideias do banco
+    ideas_df = load_brainstorm_ideas(project_name)
+    
+    if ideas_df is not None and len(ideas_df) > 0:
+        # Métricas
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total de Ideias", len(ideas_df))
+        with col2:
+            high_impact = len(ideas_df[ideas_df['expected_impact'].isin(['Alto', 'Muito Alto'])])
+            st.metric("Alto Impacto", high_impact)
+        with col3:
+            low_effort = len(ideas_df[ideas_df['implementation_effort'].isin(['Baixo', 'Muito Baixo'])])
+            st.metric("Baixo Esforço", low_effort)
+        with col4:
+            approved = len(ideas_df[ideas_df['status'] == 'approved'])
+            st.metric("Aprovadas", approved)
         
-        ideas_df = pd.DataFrame(st.session_state.brainstorm_ideas)
+        st.divider()
         
         # Filtros
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             filter_category = st.multiselect(
                 "Filtrar por Categoria",
@@ -345,29 +425,143 @@ with tab1:
                 "Filtrar por Impacto",
                 ["Muito Baixo", "Baixo", "Médio", "Alto", "Muito Alto"]
             )
+        with col3:
+            filter_status = st.multiselect(
+                "Filtrar por Status",
+                ideas_df['status'].unique(),
+                default=['proposed']
+            )
         
         # Aplicar filtros
         filtered_df = ideas_df.copy()
         if filter_category:
             filtered_df = filtered_df[filtered_df['category'].isin(filter_category)]
         if filter_impact:
-            filtered_df = filtered_df[filtered_df['impact'].isin(filter_impact)]
+            filtered_df = filtered_df[filtered_df['expected_impact'].isin(filter_impact)]
+        if filter_status:
+            filtered_df = filtered_df[filtered_df['status'].isin(filter_status)]
         
         # Cards de ideias
         for idx, idea in filtered_df.iterrows():
-            with st.expander(f"💡 {idea['title']} - {idea['category']}"):
-                col1, col2 = st.columns([3, 1])
+            with st.expander(f"💡 {idea['title']} - {idea['category']} ({idea['status']})"):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
                 with col1:
                     st.write(f"**Descrição:** {idea['description']}")
-                    if idea['benefits']:
+                    if pd.notna(idea.get('benefits')) and idea['benefits']:
                         st.write(f"**Benefícios:** {idea['benefits']}")
-                    if idea['risks']:
+                    if pd.notna(idea.get('risks')) and idea['risks']:
                         st.write(f"**Riscos:** {idea['risks']}")
+                    if pd.notna(idea.get('responsible')) and idea['responsible']:
+                        st.write(f"**Responsável Sugerido:** {idea['responsible']}")
+                
                 with col2:
-                    st.metric("Impacto", idea['impact'])
-                    st.metric("Esforço", idea['effort'])
-                    if idea['responsible']:
-                        st.caption(f"Responsável: {idea['responsible']}")
+                    st.metric("Impacto", idea['expected_impact'])
+                    st.metric("Esforço", idea['implementation_effort'])
+                    
+                    # Score de priorização (Quick Win)
+                    impact_score = {"Muito Baixo": 1, "Baixo": 2, "Médio": 3, "Alto": 4, "Muito Alto": 5}
+                    effort_score = {"Muito Baixo": 5, "Baixo": 4, "Médio": 3, "Alto": 2, "Muito Alto": 1}
+                    
+                    priority_score = impact_score.get(idea['expected_impact'], 3) * effort_score.get(idea['implementation_effort'], 3)
+                    
+                    if priority_score >= 16:
+                        st.success(f"🎯 Quick Win (Score: {priority_score})")
+                    elif priority_score >= 9:
+                        st.info(f"📊 Média Prioridade (Score: {priority_score})")
+                    else:
+                        st.warning(f"⏸️ Baixa Prioridade (Score: {priority_score})")
+                
+                with col3:
+                    st.caption(f"Criado em: {pd.to_datetime(idea['created_at']).strftime('%d/%m/%Y')}")
+                    
+                    # Ações
+                    new_status = st.selectbox(
+                        "Status",
+                        ["proposed", "under_review", "approved", "rejected", "implemented"],
+                        index=["proposed", "under_review", "approved", "rejected", "implemented"].index(idea['status']),
+                        key=f"status_idea_{idea['id']}"
+                    )
+                    
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button("💾", key=f"save_{idea['id']}", help="Atualizar status"):
+                            if update_idea_status(idea['id'], new_status):
+                                st.success("✅")
+                                st.rerun()
+                    
+                    with col_btn2:
+                        if st.button("🗑️", key=f"delete_{idea['id']}", help="Excluir ideia"):
+                            if delete_brainstorm_idea(idea['id']):
+                                st.success("Excluído!")
+                                st.rerun()
+        
+        # Exportar ideias
+        st.divider()
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Converter para ação
+            st.subheader("🔄 Converter em Ação")
+            ideas_to_convert = filtered_df[filtered_df['status'] == 'approved']['title'].tolist()
+            
+            if ideas_to_convert:
+                selected_idea = st.selectbox("Selecione uma ideia aprovada:", ideas_to_convert)
+                
+                if st.button("➡️ Converter em Ação", type="primary"):
+                    # Buscar dados completos da ideia
+                    idea_data = filtered_df[filtered_df['title'] == selected_idea].iloc[0]
+                    
+                    # Criar ação baseada na ideia
+                    action = {
+                        'action_title': idea_data['title'],
+                        'description': idea_data['description'],
+                        'responsible': idea_data.get('responsible', ''),
+                        'due_date': (datetime.now() + timedelta(days=30)).date().isoformat(),
+                        'status': 'Não Iniciado',
+                        'impact_level': idea_data['expected_impact'],
+                        'effort_level': idea_data['implementation_effort'],
+                        'priority': 5,
+                        'success_criteria': idea_data.get('benefits', ''),
+                        'resources_needed': ''
+                    }
+                    
+                    if save_improvement_action(project_name, action):
+                        # Atualizar status da ideia para implementada
+                        update_idea_status(idea_data['id'], 'implemented')
+                        st.success("✅ Ideia convertida em ação!")
+                        st.rerun()
+            else:
+                st.info("Aprove ideias primeiro para convertê-las em ações")
+        
+        with col2:
+            # Download CSV
+            st.subheader("📥 Exportar Ideias")
+            csv = filtered_df.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"brainstorm_{project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+    else:
+        st.info("💡 Nenhuma ideia cadastrada ainda. Use o formulário acima para adicionar a primeira ideia!")
+        
+        # Verificar se há ideias apenas no session_state (migração)
+        if 'brainstorm_ideas' in st.session_state and st.session_state.brainstorm_ideas:
+            st.warning(f"⚠️ Encontradas {len(st.session_state.brainstorm_ideas)} ideias não salvas na sessão.")
+            
+            if st.button("💾 Migrar ideias para o banco de dados"):
+                migrated = 0
+                for idea in st.session_state.brainstorm_ideas:
+                    if save_brainstorm_idea(project_name, idea):
+                        migrated += 1
+                
+                if migrated > 0:
+                    st.success(f"✅ {migrated} ideias migradas com sucesso!")
+                    st.session_state.brainstorm_ideas = []
+                    st.rerun()
 
 # ========================= TAB 2: PRIORIZAÇÃO =========================
 
