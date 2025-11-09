@@ -1,449 +1,440 @@
-# main.py ou Home.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import plotly.graph_objects as go
-import plotly.express as px
+import os
+from supabase import create_client, Client
 
 # Configuração da página
 st.set_page_config(
-    page_title="Green Belt Project Management System",
+    page_title="Green Belt - Lean Six Sigma",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# CSS customizado
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        color: #2E7D32;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .phase-card {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-    }
-    .metric-card {
-        background-color: white;
-        padding: 1rem;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-</style>
-""", unsafe_allow_html=True)
+# ========================= FUNÇÕES AUXILIARES =========================
 
 # Inicializar Supabase
-try:
-    from supabase import create_client, Client
-    
-    @st.cache_resource
-    def init_supabase():
-        url = st.secrets.get("SUPABASE_URL", "")
-        key = st.secrets.get("SUPABASE_KEY", "")
+@st.cache_resource
+def init_supabase():
+    """Inicializa conexão com Supabase"""
+    try:
+        if "supabase" in st.secrets:
+            url = st.secrets["supabase"]["url"]
+            key = st.secrets["supabase"]["key"]
+        else:
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_KEY", "")
+        
         if url and key:
             return create_client(url, key)
         return None
-    
-    supabase = init_supabase()
-except Exception as e:
-    st.error(f"Erro ao conectar com Supabase: {e}")
-    supabase = None
+    except Exception as e:
+        st.error(f"Erro ao conectar com Supabase: {str(e)}")
+        return None
 
-# Inicializar session state
-if 'current_project_id' not in st.session_state:
-    st.session_state.current_project_id = None
-if 'current_project_name' not in st.session_state:
-    st.session_state.current_project_name = None
-if 'current_phase' not in st.session_state:
-    st.session_state.current_phase = 'Define'
+supabase = init_supabase()
+
+# Função para listar projetos
+@st.cache_data(ttl=300)
+def list_projects():
+    """Lista todos os projetos disponíveis"""
+    if not supabase:
+        return []
+    
+    try:
+        response = supabase.table('projects').select("*").execute()
+        if response.data:
+            return response.data
+        return []
+    except Exception as e:
+        st.error(f"Erro ao listar projetos: {str(e)}")
+        return []
+
+# Função para carregar projeto
+def load_project(project_name):
+    """Carrega dados de um projeto específico"""
+    if not supabase:
+        return None
+    
+    try:
+        response = supabase.table('projects').select("*").eq('project_name', project_name).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar projeto: {str(e)}")
+        return None
+
+# ========================= INTERFACE PRINCIPAL =========================
 
 # Header
-st.markdown('<h1 class="main-header">🎯 Green Belt Project Management System</h1>', unsafe_allow_html=True)
+st.title("🎯 Green Belt - Lean Six Sigma")
+st.markdown("Sistema completo para gestão de projetos de melhoria contínua usando a metodologia DMAIC")
 
-# Verificar conexão com Supabase
-if not supabase:
-    st.error("""
-    ⚠️ **Supabase não configurado!**
-    
-    Para configurar:
-    1. Crie uma conta em [supabase.com](https://supabase.com)
-    2. Crie um novo projeto
-    3. Execute o script SQL fornecido no SQL Editor
-    4. Adicione as credenciais no arquivo `.streamlit/secrets.toml`:
-    ```
-    SUPABASE_URL = "sua-url-aqui"
-    SUPABASE_KEY = "sua-key-aqui"
-    ```
-    """)
-    st.stop()
-
-# Sidebar - Seleção/Criação de Projeto
+# Sidebar
 with st.sidebar:
-    st.header("📁 Gestão de Projetos")
+    st.header("📊 Navegação")
     
-    # Carregar projetos existentes
-    try:
-        projects_response = supabase.table('projects').select("*").order('created_at', desc=True).execute()
-        projects = projects_response.data if projects_response.data else []
-    except Exception as e:
-        st.error(f"Erro ao carregar projetos: {e}")
-        projects = []
+    # Status da conexão
+    if supabase:
+        st.success("✅ Conectado ao Supabase")
+    else:
+        st.warning("⚠️ Modo offline")
+    
+    st.divider()
     
     # Seleção de projeto
+    st.subheader("🗂️ Projeto Ativo")
+    
+    projects = list_projects()
+    
     if projects:
-        project_names = ["Novo Projeto..."] + [p['name'] for p in projects]
-        selected_project = st.selectbox("Selecione um Projeto:", project_names)
+        # CORREÇÃO: Usar 'project_name' ao invés de 'name'
+        project_names = ["Novo Projeto..."] + [p.get('project_name', 'Sem nome') for p in projects]
         
-        if selected_project != "Novo Projeto...":
-            selected_project_data = next(p for p in projects if p['name'] == selected_project)
-            if st.button("📂 Carregar Projeto"):
-                st.session_state.current_project_id = selected_project_data['id']
-                st.session_state.current_project_name = selected_project_data['name']
-                st.session_state.current_phase = selected_project_data.get('current_phase', 'Define')
-                st.success(f"Projeto '{selected_project}' carregado!")
-                st.rerun()
-    
-    # Criar novo projeto
-    st.divider()
-    st.subheader("➕ Criar Novo Projeto")
-    
-    with st.form("new_project_form"):
-        project_name = st.text_input("Nome do Projeto*")
-        project_description = st.text_area("Descrição")
-        company = st.text_input("Empresa")
-        department = st.text_input("Departamento")
-        project_type = st.selectbox(
-            "Tipo de Projeto",
-            ["Manufacturing", "Service", "Transactional", "Healthcare", "IT", "Other"]
+        selected_index = 0
+        if 'project_name' in st.session_state:
+            try:
+                selected_index = project_names.index(st.session_state.project_name)
+            except ValueError:
+                selected_index = 0
+        
+        selected = st.selectbox(
+            "Selecione um projeto:",
+            project_names,
+            index=selected_index
         )
         
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("Data de Início")
-        with col2:
-            target_date = st.date_input("Data Alvo")
+        if selected != "Novo Projeto..." and selected != st.session_state.get('project_name'):
+            project_data = load_project(selected)
+            if project_data:
+                st.session_state.project_name = selected
+                st.session_state.project_data = project_data
+                st.rerun()
+    else:
+        st.info("Nenhum projeto encontrado")
+        if st.button("➕ Criar Primeiro Projeto"):
+            st.switch_page("pages/1_📋_Define.py")
+    
+    # Mostrar informações do projeto ativo
+    if 'project_name' in st.session_state and st.session_state.project_name != "Novo Projeto...":
+        st.divider()
+        st.caption(f"**Projeto:** {st.session_state.project_name}")
         
-        champion = st.text_input("Champion/Sponsor")
-        project_leader = st.text_input("Líder do Projeto (Green Belt)")
-        expected_savings = st.number_input("Economia Esperada (R$)", min_value=0.0, step=1000.0)
-        
-        submitted = st.form_submit_button("Criar Projeto", type="primary")
-        
-        if submitted and project_name:
-            try:
-                new_project = {
-                    'name': project_name,
-                    'description': project_description,
-                    'company': company,
-                    'department': department,
-                    'project_type': project_type,
-                    'start_date': start_date.isoformat(),
-                    'target_date': target_date.isoformat(),
-                    'champion': champion,
-                    'project_leader': project_leader,
-                    'expected_savings': expected_savings
-                }
-                
-                response = supabase.table('projects').insert(new_project).execute()
-                
-                if response.data:
-                    st.session_state.current_project_id = response.data[0]['id']
-                    st.session_state.current_project_name = project_name
-                    st.success(f"✅ Projeto '{project_name}' criado com sucesso!")
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"Erro ao criar projeto: {e}")
+        if 'project_data' in st.session_state:
+            project_info = st.session_state.project_data
+            if project_info.get('project_leader'):
+                st.caption(f"**Líder:** {project_info['project_leader']}")
+            if project_info.get('start_date'):
+                st.caption(f"**Início:** {project_info['start_date']}")
+    
+    st.divider()
+    
+    # Links para páginas
+    st.subheader("📑 Fases DMAIC")
+    
+    pages = [
+        ("📋 Define", "pages/1_📋_Define.py"),
+        ("📏 Measure", "pages/2_📏_Measure.py"),
+        ("📊 Analyze", "pages/3_📊_Analyze.py"),
+        ("🔧 Improve", "pages/4_🔧_Improve.py"),
+        ("✅ Control", "pages/5_📈_Control.py")
+    ]
+    
+    for page_name, page_path in pages:
+        if st.button(page_name, use_container_width=True):
+            st.switch_page(page_path)
+    
+    # Ferramentas adicionais
+    st.divider()
+    st.subheader("🛠️ Ferramentas")
+    
+    if st.button("🔍 Diagnóstico Supabase", use_container_width=True):
+        st.switch_page("pages/6_🔍_Diagnostico_Supabase.py")
 
-# Área principal
-if st.session_state.current_project_id:
-    # Carregar dados do projeto atual
-    try:
-        project_data = supabase.table('projects').select("*").eq('id', st.session_state.current_project_id).single().execute()
-        project = project_data.data
-    except:
-        project = {}
+# Conteúdo principal
+# Criar 3 colunas para métricas
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        label="Total de Projetos",
+        value=len(projects) if projects else 0,
+        delta="Ativos"
+    )
+
+with col2:
+    if 'project_data' in st.session_state and st.session_state.project_data:
+        baseline = st.session_state.project_data.get('baseline_value', 0)
+        target = st.session_state.project_data.get('target_value', 0)
+        if baseline and target:
+            improvement = ((baseline - target) / baseline * 100) if baseline != 0 else 0
+            st.metric(
+                label="Meta de Melhoria",
+                value=f"{abs(improvement):.1f}%",
+                delta="Do projeto ativo"
+            )
+    else:
+        st.metric(label="Meta de Melhoria", value="N/A")
+
+with col3:
+    if 'project_data' in st.session_state and st.session_state.project_data:
+        savings = st.session_state.project_data.get('expected_savings', 0)
+        st.metric(
+            label="Economia Esperada",
+            value=f"R$ {savings:,.0f}" if savings else "N/A"
+        )
+    else:
+        st.metric(label="Economia Esperada", value="N/A")
+
+st.divider()
+
+# Tabs para diferentes visualizações
+tab1, tab2, tab3, tab4 = st.tabs(["🏠 Visão Geral", "📈 Dashboard", "📚 Metodologia", "❓ Ajuda"])
+
+with tab1:
+    st.header("🏠 Visão Geral do Sistema")
     
-    # Header do projeto
-    st.success(f"📊 Projeto Ativo: **{st.session_state.current_project_name}**")
+    if 'project_name' in st.session_state and st.session_state.project_name != "Novo Projeto...":
+        st.success(f"📁 Trabalhando no projeto: **{st.session_state.project_name}**")
+        
+        # Status das fases
+        st.subheader("📊 Status das Fases DMAIC")
+        
+        phases = {
+            "Define": "📋",
+            "Measure": "📏",
+            "Analyze": "📊",
+            "Improve": "🔧",
+            "Control": "✅"
+        }
+        
+        cols = st.columns(5)
+        for i, (phase, icon) in enumerate(phases.items()):
+            with cols[i]:
+                # Verificar status (simplificado - você pode melhorar isso)
+                status = "🟢" if i == 0 else "🔴"  # Por enquanto, só Define está completo
+                st.markdown(f"""
+                <div style="text-align: center; padding: 20px; background: #f0f2f6; border-radius: 10px;">
+                    <h3>{icon}</h3>
+                    <p>{phase}</p>
+                    <p>{status}</p>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.info("👈 Selecione ou crie um projeto para começar")
+        
+        # Cards de início rápido
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            <div style="padding: 20px; background: #e3f2fd; border-radius: 10px;">
+                <h3>🆕 Novo Projeto</h3>
+                <p>Inicie um novo projeto Green Belt do zero</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("Criar Projeto", use_container_width=True):
+                st.switch_page("pages/1_📋_Define.py")
+        
+        with col2:
+            st.markdown("""
+            <div style="padding: 20px; background: #f3e5f5; border-radius: 10px;">
+                <h3>📂 Projetos Existentes</h3>
+                <p>Continue trabalhando em um projeto em andamento</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if projects:
+                st.caption(f"{len(projects)} projetos disponíveis")
+        
+        with col3:
+            st.markdown("""
+            <div style="padding: 20px; background: #e8f5e9; border-radius: 10px;">
+                <h3>📚 Aprender</h3>
+                <p>Conheça a metodologia DMAIC e suas ferramentas</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("Ver Metodologia", use_container_width=True):
+                st.session_state.selected_tab = 2
+
+with tab2:
+    st.header("📈 Dashboard Executivo")
     
-    # Métricas principais
-    col1, col2, col3, col4, col5 = st.columns(5)
+    if projects:
+        # Criar DataFrame com os projetos
+        df_projects = pd.DataFrame(projects)
+        
+        # Métricas gerais
+        st.subheader("📊 Resumo dos Projetos")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_projects = len(df_projects)
+            st.metric("Total de Projetos", total_projects)
+        
+        with col2:
+            active_projects = len(df_projects[df_projects.get('status', 'active') == 'active']) if 'status' in df_projects.columns else total_projects
+            st.metric("Projetos Ativos", active_projects)
+        
+        with col3:
+            if 'expected_savings' in df_projects.columns:
+                total_savings = df_projects['expected_savings'].sum()
+                st.metric("Economia Total", f"R$ {total_savings:,.0f}")
+            else:
+                st.metric("Economia Total", "N/A")
+        
+        with col4:
+            if 'project_leader' in df_projects.columns:
+                unique_leaders = df_projects['project_leader'].nunique()
+                st.metric("Green Belts", unique_leaders)
+            else:
+                st.metric("Green Belts", "N/A")
+        
+        # Tabela de projetos
+        st.subheader("📋 Lista de Projetos")
+        
+        # Selecionar colunas relevantes que existem
+        display_columns = []
+        possible_columns = ['project_name', 'project_leader', 'status', 'start_date', 'expected_savings']
+        
+        for col in possible_columns:
+            if col in df_projects.columns:
+                display_columns.append(col)
+        
+        if display_columns:
+            st.dataframe(
+                df_projects[display_columns],
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.dataframe(df_projects, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum projeto cadastrado ainda")
+
+with tab3:
+    st.header("📚 Metodologia DMAIC")
+    
+    st.markdown("""
+    ## O que é DMAIC?
+    
+    DMAIC é uma metodologia estruturada de solução de problemas usada em projetos Lean Six Sigma:
+    
+    ### 📋 **DEFINE** - Definir
+    - Definir o problema e objetivos do projeto
+    - Estabelecer o escopo e metas
+    - Identificar stakeholders e formar a equipe
+    - Criar o Project Charter
+    - Mapear o processo (SIPOC)
+    - Coletar a Voz do Cliente (VOC)
+    
+    ### 📏 **MEASURE** - Medir
+    - Estabelecer o plano de coleta de dados
+    - Validar o sistema de medição (MSA)
+    - Coletar dados baseline
+    - Calcular a capacidade atual do processo
+    - Identificar métricas-chave
+    
+    ### 📊 **ANALYZE** - Analisar
+    - Identificar causas raiz (Ishikawa, 5 Porquês)
+    - Análise de Pareto
+    - Testes de hipóteses
+    - Análise de correlação
+    - Mapear desperdícios e gargalos
+    
+    ### 🔧 **IMPROVE** - Melhorar
+    - Gerar soluções (Brainstorming)
+    - Priorizar melhorias (Matriz Impacto x Esforço)
+    - Implementar pilotos
+    - Validar melhorias
+    - Criar plano de implementação
+    
+    ### ✅ **CONTROL** - Controlar
+    - Estabelecer plano de controle
+    - Implementar gráficos de controle
+    - Documentar novos procedimentos
+    - Treinar equipe
+    - Monitorar sustentabilidade
+    - Documentar lições aprendidas
+    
+    ---
+    
+    ### 🎯 Benefícios do DMAIC
+    
+    - ✅ Abordagem estruturada e sistemática
+    - ✅ Decisões baseadas em dados
+    - ✅ Foco em causas raiz
+    - ✅ Resultados mensuráveis
+    - ✅ Sustentabilidade das melhorias
+    - ✅ Redução de variabilidade
+    - ✅ Aumento da satisfação do cliente
+    """)
+
+with tab4:
+    st.header("❓ Ajuda e Suporte")
+    
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.metric(
-            "Fase Atual",
-            project.get('current_phase', 'Define'),
-            delta=f"{project.get('progress_percentage', 0)}% completo"
-        )
+        st.subheader("🚀 Como Começar")
+        st.markdown("""
+        1. **Crie um novo projeto** na página Define
+        2. **Preencha o Project Charter** com as informações básicas
+        3. **Colete dados** na fase Measure
+        4. **Analise as causas** do problema
+        5. **Implemente melhorias** identificadas
+        6. **Estabeleça controles** para sustentar os ganhos
+        """)
+        
+        st.subheader("📖 Recursos Úteis")
+        st.markdown("""
+        - [Lean Six Sigma Guide](https://www.isixsigma.com)
+        - [ASQ - American Society for Quality](https://asq.org)
+        - [Gemba Academy](https://www.gembaacademy.com)
+        """)
     
     with col2:
-        days_elapsed = (datetime.now().date() - datetime.fromisoformat(project.get('start_date', datetime.now().isoformat())).date()).days
-        st.metric("Dias Decorridos", days_elapsed)
-    
-    with col3:
-        days_remaining = (datetime.fromisoformat(project.get('target_date', datetime.now().isoformat())).date() - datetime.now().date()).days
-        st.metric("Dias Restantes", days_remaining)
-    
-    with col4:
-        st.metric("Economia Esperada", f"R$ {project.get('expected_savings', 0):,.0f}")
-    
-    with col5:
-        st.metric("Status", project.get('status', 'Active'))
-    
-    # Tabs para cada fase DMAIC
-    st.markdown("---")
-    st.header("📋 Fases DMAIC")
-    
-    define_tab, measure_tab, analyze_tab, improve_tab, control_tab = st.tabs([
-        "1️⃣ DEFINE",
-        "2️⃣ MEASURE",
-        "3️⃣ ANALYZE",
-        "4️⃣ IMPROVE",
-        "5️⃣ CONTROL"
-    ])
-    
-    with define_tab:
-        st.header("Define - Definição do Projeto")
+        st.subheader("🛠️ Ferramentas Disponíveis")
+        st.markdown("""
+        **Fase Define:**
+        - Project Charter
+        - SIPOC
+        - Voice of Customer (VOC)
         
-        col1, col2 = st.columns([2, 1])
+        **Fase Measure:**
+        - Plano de Coleta de Dados
+        - MSA (Measurement System Analysis)
+        - Capacidade do Processo
         
-        with col1:
-            st.subheader("📝 Project Charter")
-            
-            # Verificar se existe charter
-            try:
-                charter_response = supabase.table('project_charter').select("*").eq('project_id', st.session_state.current_project_id).execute()
-                charter = charter_response.data[0] if charter_response.data else {}
-            except:
-                charter = {}
-            
-            if charter:
-                st.info("**Problem Statement:**")
-                st.write(charter.get('problem_statement', 'Não definido'))
-                
-                st.info("**Goal Statement:**")
-                st.write(charter.get('goal_statement', 'Não definido'))
-                
-                st.info("**Escopo:**")
-                col_in, col_out = st.columns(2)
-                with col_in:
-                    st.write("✅ **Dentro do Escopo:**")
-                    st.write(charter.get('in_scope', 'Não definido'))
-                with col_out:
-                    st.write("❌ **Fora do Escopo:**")
-                    st.write(charter.get('out_scope', 'Não definido'))
-            else:
-                st.warning("Charter não definido. Acesse a página Define para criar.")
+        **Fase Analyze:**
+        - Diagrama de Ishikawa
+        - Análise de Pareto
+        - 5 Porquês
+        - Testes de Hipóteses
         
-        with col2:
-            st.subheader("📊 Métricas Principais")
-            
-            if charter:
-                primary_metric = charter.get('primary_metric', 'Não definida')
-                current_value = charter.get('primary_metric_current', 0)
-                target_value = charter.get('primary_metric_target', 0)
-                unit = charter.get('primary_metric_unit', '')
-                
-                st.metric(
-                    primary_metric,
-                    f"{current_value} {unit}",
-                    delta=f"Meta: {target_value} {unit}"
-                )
-                
-                # Progress bar
-                if current_value and target_value:
-                    progress = min(abs((target_value - current_value) / current_value * 100), 100)
-                    st.progress(progress / 100)
-                    st.caption(f"Melhoria necessária: {progress:.1f}%")
-    
-    with measure_tab:
-        st.header("Measure - Coleta e Validação de Dados")
+        **Fase Improve:**
+        - Brainstorming
+        - Matriz de Priorização
+        - Plano de Ação 5W2H
         
-        # Estatísticas de medições
-        try:
-            measurements_count = supabase.table('measurements').select("count", count='exact').eq('project_id', st.session_state.current_project_id).execute()
-            total_measurements = measurements_count.count if measurements_count else 0
-        except:
-            total_measurements = 0
+        **Fase Control:**
+        - Plano de Controle
+        - Gráficos de Controle
+        - Documentação de Lições
+        """)
         
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Total de Medições", total_measurements)
-        
-        with col2:
-            st.metric("Período de Coleta", "30 dias")  # Placeholder
-        
-        with col3:
-            st.metric("Taxa de Defeitos", "5.2%")  # Placeholder
-        
-        if total_measurements > 0:
-            st.info(f"✅ {total_measurements} medições coletadas. Acesse a página Measure para análise detalhada.")
-        else:
-            st.warning("Nenhuma medição coletada ainda. Acesse a página Measure para iniciar.")
-    
-    with analyze_tab:
-        st.header("Analyze - Análise Estatística e Identificação de Causas")
-        
-        # Resumo das análises
-        try:
-            analyses_count = supabase.table('analyze_results').select("count", count='exact').eq('project_id', st.session_state.current_project_id).execute()
-            total_analyses = analyses_count.count if analyses_count else 0
-            
-            root_causes_count = supabase.table('root_causes').select("count", count='exact').eq('project_id', st.session_state.current_project_id).execute()
-            total_root_causes = root_causes_count.count if root_causes_count else 0
-        except:
-            total_analyses = 0
-            total_root_causes = 0
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Análises Realizadas", total_analyses)
-        
-        with col2:
-            st.metric("Causas Raiz Identificadas", total_root_causes)
-        
-        with col3:
-            st.metric("Causas Validadas", 0)  # Placeholder
-        
-        if total_root_causes > 0:
-            st.info(f"✅ {total_root_causes} causas raiz identificadas. Acesse a página Analyze para detalhes.")
-        else:
-            st.warning("Análise pendente. Acesse a página Analyze para identificar causas raiz.")
-    
-    with improve_tab:
-        st.header("Improve - Implementação de Melhorias")
-        
-        # Status das ações
-        try:
-            actions_count = supabase.table('action_plans').select("count", count='exact').eq('project_id', st.session_state.current_project_id).execute()
-            total_actions = actions_count.count if actions_count else 0
-        except:
-            total_actions = 0
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Ações Planejadas", total_actions)
-        
-        with col2:
-            st.metric("Ações em Andamento", 0)  # Placeholder
-        
-        with col3:
-            st.metric("Ações Concluídas", 0)  # Placeholder
-        
-        if total_actions > 0:
-            st.info(f"✅ {total_actions} ações planejadas. Acesse a página Improve para gerenciar.")
-        else:
-            st.warning("Nenhuma ação planejada. Acesse a página Improve para criar plano de ação.")
-    
-    with control_tab:
-        st.header("Control - Controle e Sustentabilidade")
-        
-        # Status do controle
-        try:
-            control_charts_count = supabase.table('control_charts').select("count", count='exact').eq('project_id', st.session_state.current_project_id).execute()
-            total_control_charts = control_charts_count.count if control_charts_count else 0
-            
-            control_plans_count = supabase.table('control_plans').select("count", count='exact').eq('project_id', st.session_state.current_project_id).execute()
-            total_control_plans = control_plans_count.count if control_plans_count else 0
-        except:
-            total_control_charts = 0
-            total_control_plans = 0
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Gráficos de Controle", total_control_charts)
-        
-        with col2:
-            st.metric("Planos de Controle", total_control_plans)
-        
-        with col3:
-            st.metric("Processo em Controle", "Sim" if total_control_charts > 0 else "Não")
-        
-        if total_control_plans > 0:
-            st.info(f"✅ {total_control_plans} planos de controle ativos. Acesse a página Control para monitorar.")
-        else:
-            st.warning("Fase de controle pendente. Complete as fases anteriores primeiro.")
-    
-    # Gráfico de progresso do projeto
-    st.markdown("---")
-    st.header("📈 Progresso do Projeto")
-    
-    phases = ['Define', 'Measure', 'Analyze', 'Improve', 'Control']
-    progress_values = [100, 80, 60, 30, 10]  # Placeholder - calcular baseado em dados reais
-    
-    fig = go.Figure(data=[
-        go.Bar(
-            x=phases,
-            y=progress_values,
-            marker_color=['green' if v == 100 else 'lightblue' for v in progress_values]
-        )
-    ])
-    
-    fig.update_layout(
-        title="Progresso por Fase DMAIC",
-        xaxis_title="Fase",
-        yaxis_title="Progresso (%)",
-        yaxis_range=[0, 100],
-        height=400
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-else:
-    # Nenhum projeto selecionado
-    st.info("""
-    👋 **Bem-vindo ao Green Belt Project Management System!**
-    
-    Este sistema foi desenvolvido para gerenciar projetos Six Sigma usando a metodologia DMAIC:
-    
-    - **D**efine - Definir o problema e objetivos
-    - **M**easure - Medir o processo atual
-    - **A**nalyze - Analisar dados e identificar causas raiz
-    - **I**mprove - Implementar melhorias
-    - **C**ontrol - Controlar e sustentar as melhorias
-    
-    **Para começar:**
-    1. Crie um novo projeto usando o formulário na barra lateral
-    2. Ou selecione um projeto existente
-    3. Navegue pelas páginas de cada fase no menu lateral
-    
-    **Recursos:**
-    - 📊 Análises estatísticas avançadas
-    - 📈 Gráficos interativos
-    - 📋 Templates e ferramentas Six Sigma
-    - 💾 Armazenamento seguro no Supabase
-    - 📱 Acesso de qualquer lugar
-    """)
-    
-    # Mostrar projetos recentes se existirem
-    if projects:
-        st.subheader("📂 Projetos Recentes")
-        
-        recent_projects = projects[:5]
-        for proj in recent_projects:
-            with st.expander(f"📁 {proj['name']}"):
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.write(f"**Tipo:** {proj.get('project_type', 'N/A')}")
-                    st.write(f"**Fase:** {proj.get('current_phase', 'Define')}")
-                with col2:
-                    st.write(f"**Líder:** {proj.get('project_leader', 'N/A')}")
-                    st.write(f"**Status:** {proj.get('status', 'Active')}")
-                with col3:
-                    st.write(f"**Início:** {proj.get('start_date', 'N/A')}")
-                    st.write(f"**Economia:** R$ {proj.get('expected_savings', 0):,.0f}")
+        st.subheader("💡 Dicas")
+        st.info("""
+        - Use dados sempre que possível
+        - Envolva a equipe em todas as fases
+        - Documente todas as decisões
+        - Celebre as vitórias
+        - Compartilhe aprendizados
+        """)
 
 # Footer
-st.markdown("---")
-st.caption("🎯 Green Belt Project Management System v1.0 | Desenvolvido com Streamlit + Supabase")
+st.divider()
+st.caption("🎯 Green Belt - Sistema de Gestão de Projetos Lean Six Sigma | Versão 1.0")
+st.caption(f"Última atualização: {datetime.now().strftime('%d/%m/%Y às %H:%M')}")
