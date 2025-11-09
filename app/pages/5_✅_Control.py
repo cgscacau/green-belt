@@ -2089,71 +2089,101 @@ with tab5:
             💡 **Dica:** O relatório foi otimizado para impressão profissional!
             """)
     
-with col3:
-    if st.button("📊 Exportar Excel Detalhado", use_container_width=True):
-        with st.spinner("Gerando arquivo Excel..."):
-            try:
-                from io import BytesIO
-                
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    with col3:
+        if st.button("📊 Exportar Excel Detalhado", use_container_width=True):
+            with st.spinner("Gerando arquivo Excel..."):
+                try:
+                    from io import BytesIO
                     
-                    # Aba 1: Resumo (SEMPRE CRIADA)
-                    project_info_dict = project_info if project_info else {}
-                    summary_data = {
-                        'Métrica': ['Projeto', 'Líder', 'Sponsor', 'Departamento', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)', 'Progresso (%)', 'Status'],
-                        'Valor': [
-                            project_name,
-                            project_info_dict.get('project_leader', 'N/A'),
-                            project_info_dict.get('project_sponsor', 'N/A'),
-                            project_info_dict.get('department', 'N/A'),
-                            baseline,
-                            target,
-                            current,
-                            f"{improvement:.1f}",
-                            f"{achievement:.0f}",
-                            'Concluído' if achievement >= 90 else 'Em andamento'
-                        ]
-                    }
-                    df_summary = pd.DataFrame(summary_data)
-                    df_summary.to_excel(writer, sheet_name='Resumo', index=False)
+                    # CORREÇÃO: Buscar dados necessários primeiro
+                    project_info_dict = project_data if project_data else {}
                     
-                    # Aba 2: Medições (se disponível)
-                    if measurements is not None and len(measurements) > 0:
-                        measurements.to_excel(writer, sheet_name='Medições', index=False)
+                    # Buscar dados do Supabase
+                    measurements_df = None
+                    actions_df = None
+                    voc_df = None
+                    control_plans_df = None
+                    lessons_df = None
                     
-                    # Aba 3: Ações (se disponível)
-                    if actions is not None and len(actions) > 0:
-                        actions.to_excel(writer, sheet_name='Ações', index=False)
+                    if supabase:
+                        try:
+                            # Medições
+                            meas_resp = supabase.table('measurements').select('*').eq('project_name', project_name).execute()
+                            if meas_resp.data:
+                                measurements_df = pd.DataFrame(meas_resp.data)
+                            
+                            # Ações
+                            actions_resp = supabase.table('improvement_actions').select('*').eq('project_name', project_name).execute()
+                            if actions_resp.data:
+                                actions_df = pd.DataFrame(actions_resp.data)
+                            
+                            # VOC
+                            voc_resp = supabase.table('voc_items').select('*').eq('project_name', project_name).execute()
+                            if voc_resp.data:
+                                voc_df = pd.DataFrame(voc_resp.data)
+                            
+                            # Controles
+                            control_resp = supabase.table('control_plans').select('*').eq('project_name', project_name).execute()
+                            if control_resp.data:
+                                control_plans_df = pd.DataFrame(control_resp.data)
+                            
+                            # Lições
+                            lessons_resp = supabase.table('lessons_learned').select('*').eq('project_name', project_name).execute()
+                            if lessons_resp.data:
+                                lessons_df = pd.DataFrame(lessons_resp.data)
+                        except:
+                            pass
                     
-                    # Aba 4: Controles (se disponível)
-                    if control_plans is not None and len(control_plans) > 0:
-                        control_plans.to_excel(writer, sheet_name='Controles', index=False)
+                    # Criar Excel
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        
+                        # ABA 1: RESUMO (SEMPRE CRIADA - OBRIGATÓRIA)
+                        summary_data = {
+                            'Métrica': ['Projeto', 'Líder', 'Sponsor', 'Departamento', 'Data Início', 'Status'],
+                            'Valor': [
+                                project_name,
+                                project_info_dict.get('project_leader', 'N/A'),
+                                project_info_dict.get('project_sponsor', 'N/A'),
+                                project_info_dict.get('department', 'N/A'),
+                                project_info_dict.get('start_date', 'N/A'),
+                                project_info_dict.get('status', 'Em Andamento')
+                            ]
+                        }
+                        pd.DataFrame(summary_data).to_excel(writer, sheet_name='Resumo', index=False)
+                        
+                        # Abas condicionais
+                        if measurements_df is not None and len(measurements_df) > 0:
+                            measurements_df.to_excel(writer, sheet_name='Medições', index=False)
+                        
+                        if actions_df is not None and len(actions_df) > 0:
+                            actions_df.to_excel(writer, sheet_name='Ações', index=False)
+                        
+                        if control_plans_df is not None and len(control_plans_df) > 0:
+                            control_plans_df.to_excel(writer, sheet_name='Controles', index=False)
+                        
+                        if voc_df is not None and len(voc_df) > 0:
+                            voc_df.to_excel(writer, sheet_name='VOC', index=False)
+                        
+                        if lessons_df is not None and len(lessons_df) > 0:
+                            lessons_df.to_excel(writer, sheet_name='Lições', index=False)
                     
-                    # Aba 5: VOC (se disponível)
-                    if voc_items is not None and len(voc_items) > 0:
-                        voc_items.to_excel(writer, sheet_name='VOC', index=False)
+                    output.seek(0)
                     
-                    # Aba 6: Lições Aprendidas (se disponível)
-                    if lessons is not None and len(lessons) > 0:
-                        lessons.to_excel(writer, sheet_name='Lições Aprendidas', index=False)
-                
-                output.seek(0)
-                
-                st.download_button(
-                    label="📥 Download Excel Completo",
-                    data=output.getvalue(),  # CORREÇÃO: usar getvalue() em vez de passar o objeto
-                    file_name=f"relatorio_excel_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-                
-                st.success("✅ Arquivo Excel gerado com sucesso!")
-                
-            except Exception as e:
-                st.error(f"❌ Erro ao gerar Excel: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc())
+                    st.download_button(
+                        label="📥 Download Excel Completo",
+                        data=output.getvalue(),
+                        file_name=f"relatorio_excel_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    
+                    st.success("✅ Arquivo Excel gerado com sucesso!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Erro ao gerar Excel: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
                
 
