@@ -457,7 +457,8 @@ with tab2:
             
             # Salvar no banco
             if supabase and st.button("💾 Salvar dados MSA no projeto"):
-                if save_process_data(st.session_state.project_name, msa_data):
+                msa_data_clean = clean_dataframe_for_json(msa_data)
+                if save_process_data(st.session_state.project_name, msa_data_clean):
                     st.success("✅ Dados salvos no projeto!")
             
             st.subheader("📊 Dados Carregados")
@@ -615,7 +616,8 @@ with tab3:
             
             # Salvar no banco
             if supabase and st.button("💾 Salvar dados do processo", key="save_process"):
-                if save_process_data(st.session_state.project_name, process_data):
+                process_data_clean = clean_dataframe_for_json(process_data)
+                if save_process_data(st.session_state.project_name, process_data_clean):
                     st.success("✅ Dados salvos no projeto!")
             
             st.subheader("📊 Análise de Capacidade do Processo")
