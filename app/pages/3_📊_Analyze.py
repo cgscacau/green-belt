@@ -14,6 +14,7 @@ from supabase import create_client, Client
 import seaborn as sns
 import matplotlib.pyplot as plt
 import textwrap # Importe no início do seu script
+import time 
 
 
 # Configuração da página
@@ -292,13 +293,14 @@ with tabs[1]:
                 if 'pareto_category' not in st.session_state:
                     st.session_state.pareto_category = data.columns[0]
                 
+                if 'pareto_category' not in st.session_state:
+                    st.session_state.pareto_category = data.columns[0]
+                
                 category_col = st.selectbox(
                     "Coluna de categorias:",
                     data.columns,
-                    index=list(data.columns).index(st.session_state.pareto_category) if st.session_state.pareto_category in data.columns else 0,
                     key="pareto_cat_select"
                 )
-                st.session_state.pareto_category = category_col
                 
                 value_col = st.selectbox(
                     "Coluna de valores:",
