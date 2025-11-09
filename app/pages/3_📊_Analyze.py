@@ -24,6 +24,10 @@ st.set_page_config(
     layout="wide"
 )
 
+# Manter tab ativa durante reruns
+if 'active_analyze_tab' not in st.session_state:
+    st.session_state.active_analyze_tab = 0
+
 # ========================= CONFIGURAÇÃO E FUNÇÕES =========================
 
 # Inicializar Supabase
@@ -50,11 +54,6 @@ supabase = init_supabase()
 if 'selected_tab' not in st.session_state:
     st.session_state.selected_tab = 0
 
-# Logo após st.set_page_config, ADICIONE:
-
-# Manter controle da tab ativa
-if 'active_analyze_tab' not in st.session_state:
-    st.session_state.active_analyze_tab = 0
 
 
 # Funções de dados
