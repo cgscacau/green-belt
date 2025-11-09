@@ -17,21 +17,6 @@ st.set_page_config(
 
 # ========================= FUNÇÕES AUXILIARES =========================
 
-def clean_dataframe_for_json(df):
-    """Limpa DataFrame para ser compatível com JSON"""
-    df_clean = df.copy()
-    
-    # Substituir valores problemáticos
-    df_clean = df_clean.replace([np.nan, np.inf, -np.inf], None)
-    
-    # Converter tipos de dados problemáticos
-    for col in df_clean.columns:
-        if df_clean[col].dtype == 'object':
-            df_clean[col] = df_clean[col].astype(str)
-        elif df_clean[col].dtype in ['datetime64[ns]', 'timedelta64[ns]']:
-            df_clean[col] = df_clean[col].astype(str)
-    
-    return df_clean
 # Inicializar Supabase
 @st.cache_resource
 def init_supabase():
@@ -51,10 +36,35 @@ def init_supabase():
         st.error(f"Erro ao conectar com Supabase: {str(e)}")
         return None
 
-# Inicializar conexão
 supabase = init_supabase()
 
-# Função para carregar projeto
+def clean_dataframe_for_json(df):
+    """Limpa DataFrame para ser compatível com JSON"""
+    df_clean = df.copy()
+    df_clean = df_clean.replace([np.nan, np.inf, -np.inf], None)
+    
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            df_clean[col] = df_clean[col].astype(str)
+        elif df_clean[col].dtype in ['datetime64[ns]', 'timedelta64[ns]']:
+            df_clean[col] = df_clean[col].astype(str)
+    
+    return df_clean
+
+def auto_clean_numeric_columns(df):
+    """Tenta limpar e converter colunas para numérico automaticamente"""
+    df_clean = df.copy()
+    
+    for col in df_clean.columns:
+        try:
+            if df_clean[col].dtype == 'object':
+                df_clean[col] = df_clean[col].astype(str).str.replace(',', '.').str.strip()
+            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+        except:
+            pass
+    
+    return df_clean
+
 def load_project_from_db(project_name):
     """Carrega dados do projeto do banco"""
     if not supabase:
@@ -69,7 +79,6 @@ def load_project_from_db(project_name):
         st.error(f"Erro ao carregar projeto: {str(e)}")
         return None
 
-# Função para listar projetos disponíveis
 @st.cache_data(ttl=300)
 def list_projects():
     """Lista todos os projetos disponíveis"""
@@ -85,7 +94,6 @@ def list_projects():
         st.error(f"Erro ao listar projetos: {str(e)}")
         return []
 
-# Função para salvar plano de coleta
 def save_collection_plan(project_name, plan_data):
     """Salva plano de coleta de dados no banco"""
     if not supabase:
@@ -94,71 +102,30 @@ def save_collection_plan(project_name, plan_data):
     try:
         plan_data['project_name'] = project_name
         plan_data['created_at'] = datetime.now().isoformat()
-        
         response = supabase.table('collection_plans').insert(plan_data).execute()
         return True
     except Exception as e:
-        # Se a tabela não existir, criar
-        if "collection_plans" in str(e):
-            create_collection_plans_table()
-            try:
-                response = supabase.table('collection_plans').insert(plan_data).execute()
-                return True
-            except:
-                return False
         st.error(f"Erro ao salvar plano: {str(e)}")
         return False
 
-# Função para criar tabela de planos de coleta se não existir
-def create_collection_plans_table():
-    """Cria tabela collection_plans se não existir"""
-    if not supabase:
-        return
-    
-    sql = """
-    CREATE TABLE IF NOT EXISTS collection_plans (
-        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        project_name VARCHAR(255) REFERENCES projects(project_name) ON DELETE CASCADE,
-        metric_name VARCHAR(255),
-        collection_method TEXT,
-        frequency VARCHAR(100),
-        responsible VARCHAR(255),
-        start_date DATE,
-        end_date DATE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-    );
-    
-    CREATE INDEX IF NOT EXISTS idx_collection_plans_project ON collection_plans(project_name);
-    """
-    
-    try:
-        supabase.postgrest.rpc('exec_sql', {'query': sql}).execute()
-    except:
-        pass
-
-# Função para salvar medições
 def save_measurements(project_name, measurements_df):
     """Salva medições no banco de dados"""
     if not supabase:
         return False
     
     try:
-        # Preparar dados para inserção
         records = []
         for idx, row in measurements_df.iterrows():
-            # Pegar o primeiro valor numérico válido da linha
             value = None
             for col_val in row:
                 try:
                     val = float(col_val)
-                    # Verificar se não é NaN ou infinito
                     if not (np.isnan(val) or np.isinf(val)):
                         value = val
                         break
                 except (ValueError, TypeError):
                     continue
             
-            # Se encontrou um valor válido, adicionar
             if value is not None:
                 record = {
                     'project_name': project_name,
@@ -169,7 +136,6 @@ def save_measurements(project_name, measurements_df):
                 }
                 records.append(record)
         
-        # Inserir apenas se houver registros válidos
         if records:
             response = supabase.table('measurements').insert(records).execute()
             return True
@@ -181,34 +147,13 @@ def save_measurements(project_name, measurements_df):
         st.error(f"Erro ao salvar medições: {str(e)}")
         return False
 
-# Função para carregar medições
-@st.cache_data(ttl=60)
-def load_measurements(project_name):
-    """Carrega medições do banco de dados"""
-    if not supabase:
-        return None
-    
-    try:
-        response = supabase.table('measurements').select("*").eq('project_name', project_name).execute()
-        if response.data:
-            return pd.DataFrame(response.data)
-        return None
-    except Exception as e:
-        st.error(f"Erro ao carregar medições: {str(e)}")
-        return None
-
-# Função para salvar dados do processo
 def save_process_data(project_name, data_df):
     """Salva dados do processo no banco"""
     if not supabase:
         return False
     
     try:
-        # Limpar dados antes de salvar
-        # Substituir NaN, inf, -inf por None
         data_df_clean = data_df.replace([np.nan, np.inf, -np.inf], None)
-        
-        # Converter DataFrame para JSON
         data_json = data_df_clean.to_dict('records')
         
         record = {
@@ -224,8 +169,21 @@ def save_process_data(project_name, data_df):
         st.error(f"Erro ao salvar dados do processo: {str(e)}")
         return False
 
+@st.cache_data(ttl=60)
+def load_measurements(project_name):
+    """Carrega medições do banco de dados"""
+    if not supabase:
+        return None
+    
+    try:
+        response = supabase.table('measurements').select("*").eq('project_name', project_name).execute()
+        if response.data:
+            return pd.DataFrame(response.data)
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar medições: {str(e)}")
+        return None
 
-# Função para carregar dados do processo
 @st.cache_data(ttl=60)
 def load_process_data(project_name):
     """Carrega dados do processo do banco"""
@@ -243,30 +201,11 @@ def load_process_data(project_name):
         st.error(f"Erro ao carregar dados do processo: {str(e)}")
         return None
 
-def auto_clean_numeric_columns(df):
-    """Tenta limpar e converter colunas para numérico automaticamente"""
-    df_clean = df.copy()
-    
-    for col in df_clean.columns:
-        # Tentar converter para numérico
-        try:
-            # Remover espaços e vírgulas
-            if df_clean[col].dtype == 'object':
-                df_clean[col] = df_clean[col].astype(str).str.replace(',', '.').str.strip()
-            
-            # Converter para numérico
-            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
-        except:
-            pass
-    
-    return df_clean
-
-# ========================= SIDEBAR PARA SELEÇÃO DE PROJETO =========================
+# ========================= SIDEBAR =========================
 
 with st.sidebar:
     st.header("🗂️ Seleção de Projeto")
     
-    # Verificar conexão
     if not supabase:
         st.error("⚠️ Supabase não configurado")
         use_local = st.checkbox("Usar modo local")
@@ -276,14 +215,12 @@ with st.sidebar:
     
     st.divider()
     
-    # Listar projetos disponíveis
     if supabase:
         projects = list_projects()
         
         if projects:
             project_names = [p['project_name'] for p in projects]
             
-            # Verificar se há projeto no session_state
             default_index = 0
             if 'project_name' in st.session_state and st.session_state.project_name in project_names:
                 default_index = project_names.index(st.session_state.project_name) + 1
@@ -304,9 +241,7 @@ with st.sidebar:
                         st.rerun()
         else:
             st.warning("Nenhum projeto encontrado")
-            st.info("Crie um projeto na página Define primeiro")
     
-    # Mostrar projeto ativo
     if 'project_name' in st.session_state:
         st.divider()
         st.success(f"📁 **Projeto Ativo:**")
@@ -319,14 +254,11 @@ with st.sidebar:
 
 # ========================= INTERFACE PRINCIPAL =========================
 
-# Título
 st.title("📏 Measure — Medição e Coleta de Dados")
 
-# Verificar se há projeto selecionado
 if 'project_name' not in st.session_state:
     st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto na página Define.")
     
-    # Mostrar projetos disponíveis
     if supabase:
         projects = list_projects()
         if projects:
@@ -336,16 +268,13 @@ if 'project_name' not in st.session_state:
             st.info("👈 Use a barra lateral para selecionar um projeto")
     st.stop()
 
-# Projeto selecionado - continuar com a página
 st.info(f"📁 Projeto: **{st.session_state.project_name}**")
 
-# Carregar dados do projeto se necessário
 if 'project_data' not in st.session_state:
     project_data = load_project_from_db(st.session_state.project_name)
     if project_data:
         st.session_state.project_data = project_data
 
-# Tabs principais
 tab1, tab2, tab3, tab4 = st.tabs([
     "📋 Data Collection Plan",
     "🔍 Measurement System Analysis",
@@ -402,12 +331,10 @@ with tab1:
                         'notes': notes
                     }
                     
-                    # Salvar no session_state
                     if 'collection_plans' not in st.session_state:
                         st.session_state.collection_plans = []
                     st.session_state.collection_plans.append(plan)
                     
-                    # Salvar no banco
                     if supabase:
                         if save_collection_plan(st.session_state.project_name, plan):
                             st.success("✅ Plano adicionado com sucesso!")
@@ -435,7 +362,6 @@ with tab1:
         - Garanta representatividade
         """)
     
-    # Exibir planos cadastrados
     if 'collection_plans' in st.session_state and st.session_state.collection_plans:
         st.divider()
         st.subheader("📋 Planos de Coleta Cadastrados")
@@ -451,10 +377,9 @@ with tab2:
     
     st.info("Análise do Sistema de Medição - Repetibilidade e Reprodutibilidade (R&R)")
     
-    # Upload de dados
     uploaded_file = st.file_uploader(
-        "Faça upload dos dados de MSA (CSV, Excel, PDF)",
-        type=['csv', 'xlsx', 'xls', 'pdf'],
+        "Faça upload dos dados de MSA (CSV, Excel)",
+        type=['csv', 'xlsx', 'xls'],
         key="msa_upload"
     )
     
@@ -466,14 +391,14 @@ with tab2:
                 msa_data = pd.read_csv(uploaded_file)
             elif file_extension in ['xlsx', 'xls']:
                 msa_data = pd.read_excel(uploaded_file)
-            elif file_extension == 'pdf':
-                st.warning("⚠️ Arquivos PDF requerem extração manual. Por favor, converta para CSV ou Excel.")
-                st.stop()
             else:
                 st.error("❌ Formato não suportado")
                 st.stop()
             
-            # Salvar no banco
+            if st.checkbox("🧹 Tentar converter colunas automaticamente para numérico", value=True, key="auto_clean_msa"):
+                msa_data = auto_clean_numeric_columns(msa_data)
+                st.success("✅ Conversão automática aplicada")
+            
             if supabase and st.button("💾 Salvar dados MSA no projeto"):
                 msa_data_clean = clean_dataframe_for_json(msa_data)
                 if save_process_data(st.session_state.project_name, msa_data_clean):
@@ -482,23 +407,16 @@ with tab2:
             st.subheader("📊 Dados Carregados")
             st.dataframe(msa_data.head(), use_container_width=True)
             
-            # Estatísticas básicas
-            col1, col2, col3 = st.columns(3)
-            
-            # Obter todas as colunas (não apenas numéricas)
             all_cols = msa_data.columns.tolist()
-            
-            # Tentar converter colunas para numérico
             numeric_cols = []
+            
             for col in all_cols:
                 try:
-                    # Tentar converter para numérico
                     pd.to_numeric(msa_data[col], errors='coerce')
                     numeric_cols.append(col)
                 except:
                     pass
             
-            # Se não encontrou colunas numéricas, mostrar todas
             if len(numeric_cols) == 0:
                 st.warning("⚠️ Nenhuma coluna numérica detectada automaticamente. Mostrando todas as colunas.")
                 numeric_cols = all_cols
@@ -506,21 +424,20 @@ with tab2:
             if len(numeric_cols) > 0:
                 analysis_col = st.selectbox("Selecione a coluna para análise:", numeric_cols)
                 
-                # Converter a coluna selecionada para numérico
                 try:
                     msa_data[analysis_col] = pd.to_numeric(msa_data[analysis_col], errors='coerce')
                 except:
                     st.error(f"❌ Não foi possível converter a coluna '{analysis_col}' para valores numéricos")
                     st.stop()
-
                 
                 if analysis_col:
-                    # Garantir que é numérico e remover valores nulos
                     data_col = pd.to_numeric(msa_data[analysis_col], errors='coerce').dropna()
                     
                     if len(data_col) == 0:
                         st.error("❌ A coluna selecionada não contém valores numéricos válidos")
                         st.stop()
+                    
+                    col1, col2, col3 = st.columns(3)
                     
                     with col1:
                         st.metric("Média", f"{data_col.mean():.3f}")
@@ -534,7 +451,6 @@ with tab2:
                         st.metric("Amplitude", f"{data_col.max() - data_col.min():.3f}")
                         st.metric("CV%", f"{(data_col.std()/data_col.mean()*100):.1f}%")
                     
-                    # Gráfico de controle
                     st.subheader("📈 Gráfico de Controle")
                     
                     mean = data_col.mean()
@@ -544,7 +460,6 @@ with tab2:
                     
                     fig = go.Figure()
                     
-                    # Dados
                     fig.add_trace(go.Scatter(
                         x=list(range(len(data_col))),
                         y=data_col,
@@ -553,11 +468,8 @@ with tab2:
                         line=dict(color='blue')
                     ))
                     
-                    # Linha média
                     fig.add_hline(y=mean, line_dash="dash", line_color="green", 
                                  annotation_text=f"Média: {mean:.2f}")
-                    
-                    # Limites de controle
                     fig.add_hline(y=ucl, line_dash="dash", line_color="red",
                                  annotation_text=f"UCL: {ucl:.2f}")
                     fig.add_hline(y=lcl, line_dash="dash", line_color="red",
@@ -572,13 +484,11 @@ with tab2:
                     
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # Análise de capacidade do sistema
                     st.subheader("📊 Análise de Capacidade")
                     
                     tolerance = st.number_input("Digite a tolerância do processo:", value=0.1, format="%.4f")
                     
                     if tolerance > 0:
-                        # Cálculo simplificado de R&R
                         measurement_variation = std
                         percent_tolerance = (measurement_variation / tolerance) * 100
                         
@@ -588,7 +498,6 @@ with tab2:
                         with col2:
                             st.metric("% da Tolerância", f"{percent_tolerance:.1f}%")
                         
-                        # Interpretação
                         if percent_tolerance < 10:
                             st.success("✅ Sistema de medição EXCELENTE (< 10%)")
                         elif percent_tolerance < 30:
@@ -599,7 +508,6 @@ with tab2:
         except Exception as e:
             st.error(f"Erro ao processar arquivo: {str(e)}")
     else:
-        # Tentar carregar dados salvos
         if supabase:
             saved_data = load_process_data(st.session_state.project_name)
             if saved_data is not None:
@@ -613,7 +521,6 @@ with tab2:
 with tab3:
     st.header("Process Capability Analysis")
     
-    # Upload de dados do processo
     uploaded_file = st.file_uploader(
         "Faça upload dos dados do processo (CSV, Excel)",
         type=['csv', 'xlsx', 'xls'],
@@ -631,32 +538,14 @@ with tab3:
             else:
                 st.error("❌ Formato não suportado")
                 st.stop()
-    # Mostrar preview dos dados
-    st.subheader("📊 Preview dos Dados Carregados")
-    st.dataframe(process_data.head(10), use_container_width=True)
-    
-    # Opção para limpar dados
-    with st.expander("🧹 Limpar Dados (Opcional)"):
-        st.write("**Remover linhas com valores não numéricos em colunas específicas:**")
-        
-        cols_to_clean = st.multiselect(
-            "Selecione colunas para converter/limpar:",
-            process_data.columns.tolist()
-        )
-        
-        if cols_to_clean and st.button("Aplicar Limpeza"):
-            for col in cols_to_clean:
-                # Converter para numérico, substituindo erros por NaN
-                process_data[col] = pd.to_numeric(process_data[col], errors='coerce')
             
-            # Remover linhas com NaN nas colunas selecionadas
-            process_data = process_data.dropna(subset=cols_to_clean)
+            st.subheader("📊 Preview dos Dados Carregados")
+            st.dataframe(process_data.head(10), use_container_width=True)
             
-            st.success(f"✅ Dados limpos! {len(process_data)} linhas restantes")
-            st.dataframe(process_data.head(), use_container_width=True)
+            if st.checkbox("🧹 Tentar converter colunas automaticamente para numérico", value=True, key="auto_clean_process"):
+                process_data = auto_clean_numeric_columns(process_data)
+                st.success("✅ Conversão automática aplicada")
             
-            
-            # Salvar no banco
             if supabase and st.button("💾 Salvar dados do processo", key="save_process"):
                 process_data_clean = clean_dataframe_for_json(process_data)
                 if save_process_data(st.session_state.project_name, process_data_clean):
@@ -683,28 +572,6 @@ with tab3:
                 
                 with col1:
                     selected_col = st.selectbox("Selecione a variável:", numeric_cols, key="cap_col")
-
-                # Mostrar informações sobre a coluna selecionada
-                if selected_col:
-                    col_data = process_data[selected_col]
-                    
-                    # Tentar converter para numérico
-                    numeric_data = pd.to_numeric(col_data, errors='coerce')
-                    valid_count = numeric_data.notna().sum()
-                    total_count = len(col_data)
-                    
-                    st.info(f"""
-                    **Informações da coluna '{selected_col}':**
-                    - Total de valores: {total_count}
-                    - Valores numéricos válidos: {valid_count}
-                    - Valores inválidos/texto: {total_count - valid_count}
-                    """)
-                    
-                    # Se tiver muitos valores inválidos, avisar
-                    if valid_count < total_count * 0.5:
-                        st.warning("⚠️ Mais de 50% dos valores não são numéricos. Considere limpar os dados antes da análise.")                
-
-                
                 
                 with col2:
                     col_lsl, col_usl = st.columns(2)
@@ -714,132 +581,117 @@ with tab3:
                         usl = st.number_input("USL", value=100.0, key="usl")
                 
                 if selected_col and usl > lsl:
-                    # Tentar converter para numérico e remover valores inválidos
                     try:
                         data = pd.to_numeric(process_data[selected_col], errors='coerce').dropna()
                         
-                        # Verificar se sobrou algum dado
                         if len(data) == 0:
                             st.error("❌ A coluna selecionada não contém valores numéricos válidos")
-                            st.info("💡 Dica: Verifique se a coluna contém apenas números. Textos e valores vazios serão ignorados.")
-                            
-                            # Mostrar amostra dos dados originais
+                            st.info("💡 Dica: Verifique se a coluna contém apenas números.")
                             st.write("**Amostra dos dados originais:**")
                             st.write(process_data[selected_col].head(10))
                             st.stop()
                         
-                        # Mostrar quantos valores foram removidos
                         original_count = len(process_data[selected_col])
                         valid_count = len(data)
                         if original_count > valid_count:
                             st.warning(f"⚠️ {original_count - valid_count} valores não numéricos foram removidos da análise")
-                            
+                        
+                        mean = data.mean()
+                        std = data.std()
+                        
+                        cp = (usl - lsl) / (6 * std)
+                        cpu = (usl - mean) / (3 * std)
+                        cpl = (mean - lsl) / (3 * std)
+                        cpk = min(cpu, cpl)
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Cp", f"{cp:.3f}")
+                            if cp >= 1.33:
+                                st.success("Capaz")
+                            elif cp >= 1.0:
+                                st.warning("Marginalmente capaz")
+                            else:
+                                st.error("Não capaz")
+                        
+                        with col2:
+                            st.metric("Cpk", f"{cpk:.3f}")
+                            if cpk >= 1.33:
+                                st.success("Capaz")
+                            elif cpk >= 1.0:
+                                st.warning("Marginalmente capaz")
+                            else:
+                                st.error("Não capaz")
+                        
+                        with col3:
+                            st.metric("Média", f"{mean:.3f}")
+                        
+                        with col4:
+                            st.metric("Desvio Padrão", f"{std:.3f}")
+                        
+                        st.subheader("📊 Distribuição do Processo")
+                        
+                        fig = go.Figure()
+                        
+                        fig.add_trace(go.Histogram(
+                            x=data,
+                            name='Dados',
+                            nbinsx=30,
+                            histnorm='probability density',
+                            marker_color='lightblue'
+                        ))
+                        
+                        x_range = np.linspace(data.min(), data.max(), 100)
+                        y_normal = norm.pdf(x_range, mean, std)
+                        
+                        fig.add_trace(go.Scatter(
+                            x=x_range,
+                            y=y_normal,
+                            mode='lines',
+                            name='Normal',
+                            line=dict(color='red', width=2)
+                        ))
+                        
+                        fig.add_vline(x=lsl, line_dash="dash", line_color="red",
+                                     annotation_text=f"LSL: {lsl}")
+                        fig.add_vline(x=usl, line_dash="dash", line_color="red",
+                                     annotation_text=f"USL: {usl}")
+                        fig.add_vline(x=mean, line_dash="dash", line_color="green",
+                                     annotation_text=f"Média: {mean:.2f}")
+                        
+                        fig.update_layout(
+                            title="Histograma com Limites de Especificação",
+                            xaxis_title="Valor",
+                            yaxis_title="Densidade",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.subheader("📈 Previsão de Defeitos")
+                        
+                        prob_below_lsl = norm.cdf(lsl, mean, std)
+                        prob_above_usl = 1 - norm.cdf(usl, mean, std)
+                        prob_defect = prob_below_lsl + prob_above_usl
+                        ppm = prob_defect * 1_000_000
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("PPM Total", f"{ppm:.0f}")
+                        with col2:
+                            st.metric("% Defeitos", f"{prob_defect*100:.3f}%")
+                        with col3:
+                            sigma_level = 3 * cpk
+                            st.metric("Nível Sigma", f"{sigma_level:.1f}σ")
+                    
                     except Exception as e:
                         st.error(f"❌ Erro ao processar coluna: {str(e)}")
                         st.stop()
                     
-                    # Cálculos de capacidade
-                    mean = data.mean()
-                    std = data.std()
-                    
-                    # Índices de capacidade
-                    cp = (usl - lsl) / (6 * std)
-                    cpu = (usl - mean) / (3 * std)
-                    cpl = (mean - lsl) / (3 * std)
-                    cpk = min(cpu, cpl)
-                    
-                    # Métricas
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric("Cp", f"{cp:.3f}")
-                        if cp >= 1.33:
-                            st.success("Capaz")
-                        elif cp >= 1.0:
-                            st.warning("Marginalmente capaz")
-                        else:
-                            st.error("Não capaz")
-                    
-                    with col2:
-                        st.metric("Cpk", f"{cpk:.3f}")
-                        if cpk >= 1.33:
-                            st.success("Capaz")
-                        elif cpk >= 1.0:
-                            st.warning("Marginalmente capaz")
-                        else:
-                            st.error("Não capaz")
-                    
-                    with col3:
-                        st.metric("Média", f"{mean:.3f}")
-                    
-                    with col4:
-                        st.metric("Desvio Padrão", f"{std:.3f}")
-                    
-                    # Histograma com curva normal
-                    st.subheader("📊 Distribuição do Processo")
-                    
-                    fig = go.Figure()
-                    
-                    # Histograma
-                    fig.add_trace(go.Histogram(
-                        x=data,
-                        name='Dados',
-                        nbinsx=30,
-                        histnorm='probability density',
-                        marker_color='lightblue'
-                    ))
-                    
-                    # Curva normal
-                    x_range = np.linspace(data.min(), data.max(), 100)
-                    y_normal = norm.pdf(x_range, mean, std)
-                    
-                    fig.add_trace(go.Scatter(
-                        x=x_range,
-                        y=y_normal,
-                        mode='lines',
-                        name='Normal',
-                        line=dict(color='red', width=2)
-                    ))
-                    
-                    # Limites de especificação
-                    fig.add_vline(x=lsl, line_dash="dash", line_color="red",
-                                 annotation_text=f"LSL: {lsl}")
-                    fig.add_vline(x=usl, line_dash="dash", line_color="red",
-                                 annotation_text=f"USL: {usl}")
-                    fig.add_vline(x=mean, line_dash="dash", line_color="green",
-                                 annotation_text=f"Média: {mean:.2f}")
-                    
-                    fig.update_layout(
-                        title="Histograma com Limites de Especificação",
-                        xaxis_title="Valor",
-                        yaxis_title="Densidade",
-                        height=400
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # PPM esperado
-                    st.subheader("📈 Previsão de Defeitos")
-                    
-                    # Calcular probabilidades
-                    prob_below_lsl = norm.cdf(lsl, mean, std)
-                    prob_above_usl = 1 - norm.cdf(usl, mean, std)
-                    prob_defect = prob_below_lsl + prob_above_usl
-                    ppm = prob_defect * 1_000_000
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("PPM Total", f"{ppm:.0f}")
-                    with col2:
-                        st.metric("% Defeitos", f"{prob_defect*100:.3f}%")
-                    with col3:
-                        sigma_level = 3 * cpk
-                        st.metric("Nível Sigma", f"{sigma_level:.1f}σ")
-                    
         except Exception as e:
             st.error(f"Erro ao processar arquivo: {str(e)}")
     else:
-        # Tentar carregar dados salvos
         if supabase:
             saved_data = load_process_data(st.session_state.project_name)
             if saved_data is not None:
@@ -853,7 +705,6 @@ with tab3:
 with tab4:
     st.header("Data Visualization")
     
-    # Upload de dados
     uploaded_file = st.file_uploader(
         "Faça upload dos dados para visualização (CSV, Excel)",
         type=['csv', 'xlsx', 'xls'],
@@ -874,13 +725,11 @@ with tab4:
             
             st.subheader("📊 Criar Visualização")
             
-            # Tipo de gráfico
             chart_type = st.selectbox(
                 "Tipo de gráfico:",
                 ["Linha", "Barra", "Scatter", "Box Plot", "Histograma", "Pareto"]
             )
             
-            # Seleção de colunas baseada no tipo
             if chart_type in ["Linha", "Barra", "Scatter"]:
                 col1, col2 = st.columns(2)
                 with col1:
@@ -888,7 +737,6 @@ with tab4:
                 with col2:
                     y_col = st.selectbox("Eixo Y:", viz_data.columns)
                 
-                # Criar gráfico
                 if st.button("Gerar Gráfico", type="primary"):
                     if chart_type == "Linha":
                         fig = px.line(viz_data, x=x_col, y=y_col, title=f"{y_col} vs {x_col}")
@@ -901,13 +749,15 @@ with tab4:
                     st.plotly_chart(fig, use_container_width=True)
             
             elif chart_type == "Box Plot":
-                col = st.selectbox("Selecione a variável:", [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()])
+                numeric_cols_viz = [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()]
+                col = st.selectbox("Selecione a variável:", numeric_cols_viz)
                 if col:
                     fig = px.box(viz_data, y=col, title=f"Box Plot - {col}")
                     st.plotly_chart(fig, use_container_width=True)
             
             elif chart_type == "Histograma":
-                col = st.selectbox("Selecione a variável:", [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()])
+                numeric_cols_viz = [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()]
+                col = st.selectbox("Selecione a variável:", numeric_cols_viz)
                 bins = st.slider("Número de bins:", 10, 50, 20)
                 if col:
                     fig = px.histogram(viz_data, x=col, nbins=bins, title=f"Histograma - {col}")
@@ -929,7 +779,6 @@ with tab4:
                     pareto_data['Percentual'] = pareto_data.iloc[:, 1] / pareto_data.iloc[:, 1].sum() * 100
                     pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
                     
-                    # Criar gráfico
                     fig = go.Figure()
                     
                     fig.add_trace(go.Bar(
@@ -960,7 +809,6 @@ with tab4:
         except Exception as e:
             st.error(f"Erro ao processar arquivo: {str(e)}")
 
-# Resumo da fase
 st.divider()
 st.header("📊 Resumo da Fase Measure")
 
@@ -984,7 +832,6 @@ if 'project_data' in st.session_state:
     with col4:
         st.metric("Status", "Em andamento")
     
-    # Checklist
     st.subheader("✅ Checklist da Fase Measure")
     
     col1, col2 = st.columns(2)
@@ -995,7 +842,7 @@ if 'project_data' in st.session_state:
             "Plano de Coleta definido": plans_count > 0,
             "MSA realizado": 'msa_data' in st.session_state,
             "Dados do processo coletados": 'process_data' in st.session_state,
-            "Capacidade calculada": False  # Implementar lógica
+            "Capacidade calculada": False
         }
         
         for item, done in checks.items():
@@ -1011,6 +858,5 @@ if 'project_data' in st.session_state:
         else:
             st.info("Complete todas as atividades antes de prosseguir.")
 
-# Footer
 st.divider()
 st.caption("💡 **Dica:** Garanta que o sistema de medição é confiável antes de coletar dados para análise")
