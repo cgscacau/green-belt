@@ -1143,14 +1143,51 @@ DADOS:
 
 #############################################################################################################################################################################################################################################################
 
-# ========================= TAB 5: TESTES DE HIPÓTESES =========================
+# ========================= TAB 5: TESTES DE HIPÓTESES (COM SALVAMENTO) =========================
 with tabs[4]:
     st.header("🔍 Testes de Hipóteses")
+    
+    # Verificar se há projeto selecionado
+    project_name = st.session_state.get('project_name', None)
+    
+    if not project_name:
+        st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
+        st.stop()
+    
+    # Botões de carregar e nova análise
+    col_load, col_new = st.columns([1, 1])
+    
+    with col_load:
+        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_hypothesis"):
+            if not supabase:
+                st.error("❌ Conexão com Supabase não disponível.")
+            else:
+                try:
+                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'hypothesis_test').order('created_at', desc=True).limit(1).execute()
+                    
+                    if response.data and len(response.data) > 0:
+                        loaded_data = response.data[0]['results']
+                        st.session_state.hypothesis_results = loaded_data
+                        st.success("✅ Teste de hipóteses carregado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ Nenhum teste de hipóteses salvo encontrado para este projeto.")
+                except Exception as e:
+                    st.error(f"Erro ao carregar dados: {str(e)}")
+    
+    with col_new:
+        if st.button("🆕 Nova Análise", use_container_width=True, key="new_hypothesis"):
+            if 'hypothesis_results' in st.session_state:
+                del st.session_state.hypothesis_results
+            st.rerun()
+    
+    st.divider()
     
     test_type = st.selectbox(
         "Tipo de Teste:",
         ["Teste t (1 amostra)", "Teste t (2 amostras)", "Teste t pareado",
-         "Mann-Whitney U", "Wilcoxon", "Qui-Quadrado", "Fisher Exact"]
+         "Mann-Whitney U", "Wilcoxon", "Qui-Quadrado", "Fisher Exact"],
+        key="test_type_select"
     )
     
     if data is not None:
@@ -1159,51 +1196,312 @@ with tabs[4]:
             categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
             
             if numeric_cols and categorical_cols:
-                value_col = st.selectbox("Variável numérica:", numeric_cols)
-                group_col = st.selectbox("Variável de grupo:", categorical_cols)
+                value_col = st.selectbox("Variável numérica:", numeric_cols, key="hyp_value_col")
+                group_col = st.selectbox("Variável de grupo:", categorical_cols, key="hyp_group_col")
                 
                 groups = data[group_col].unique()
                 if len(groups) >= 2:
-                    group1 = st.selectbox("Grupo 1:", groups)
-                    group2 = st.selectbox("Grupo 2:", [g for g in groups if g != group1])
+                    group1 = st.selectbox("Grupo 1:", groups, key="hyp_group1")
+                    group2 = st.selectbox("Grupo 2:", [g for g in groups if g != group1], key="hyp_group2")
                     
-                    alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05)
+                    alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="hyp_alpha")
                     
-                    if st.button("Executar Teste"):
-                        data1 = data[data[group_col] == group1][value_col].dropna()
-                        data2 = data[data[group_col] == group2][value_col].dropna()
+                    # Botões de ação
+                    col_exec, col_save, col_export = st.columns([1, 1, 1])
+                    
+                    with col_exec:
+                        execute_test = st.button("🔄 Executar Teste", key="run_hypothesis", use_container_width=True, type="primary")
+                    
+                    with col_save:
+                        save_test = st.button("💾 Salvar Análise", key="save_hypothesis", use_container_width=True)
+                    
+                    with col_export:
+                        export_test = st.button("📥 Exportar Resultados", key="export_hypothesis", use_container_width=True)
+                    
+                    # Executar teste
+                    if execute_test or 'hypothesis_results' in st.session_state:
                         
-                        # Teste t
-                        t_stat, p_value = stats.ttest_ind(data1, data2)
-                        
-                        # Teste de Levene para homogeneidade de variâncias
-                        levene_stat, levene_p = stats.levene(data1, data2)
-                        
-                        # Resultados
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.metric("Estatística t", f"{t_stat:.4f}")
-                            st.metric("Valor p", f"{p_value:.4f}")
-                            st.metric("Média Grupo 1", f"{data1.mean():.3f}")
-                            st.metric("Média Grupo 2", f"{data2.mean():.3f}")
-                        
-                        with col2:
-                            st.metric("Diferença de Médias", f"{data1.mean() - data2.mean():.3f}")
-                            st.metric("Teste de Levene p-value", f"{levene_p:.4f}")
+                        if execute_test:
+                            data1 = data[data[group_col] == group1][value_col].dropna()
+                            data2 = data[data[group_col] == group2][value_col].dropna()
                             
-                            # Interpretação
-                            if p_value < alpha:
-                                st.error(f"Rejeitar H₀: Existe diferença significativa (p={p_value:.4f} < α={alpha})")
-                            else:
-                                st.success(f"Não rejeitar H₀: Não há diferença significativa (p={p_value:.4f} ≥ α={alpha})")
+                            # Teste t
+                            t_stat, p_value = stats.ttest_ind(data1, data2)
+                            
+                            # Teste de Levene para homogeneidade de variâncias
+                            levene_stat, levene_p = stats.levene(data1, data2)
+                            
+                            # Teste de normalidade (Shapiro-Wilk)
+                            shapiro_p1 = stats.shapiro(data1)[1] if len(data1) <= 5000 else None
+                            shapiro_p2 = stats.shapiro(data2)[1] if len(data2) <= 5000 else None
+                            
+                            # Calcular tamanho do efeito (Cohen's d)
+                            pooled_std = np.sqrt(((len(data1)-1)*data1.std()**2 + (len(data2)-1)*data2.std()**2) / (len(data1)+len(data2)-2))
+                            cohens_d = (data1.mean() - data2.mean()) / pooled_std
+                            
+                            # Salvar resultados no session_state
+                            st.session_state.hypothesis_results = {
+                                'test_type': test_type,
+                                'value_col': value_col,
+                                'group_col': group_col,
+                                'group1': str(group1),
+                                'group2': str(group2),
+                                'alpha': float(alpha),
+                                't_statistic': float(t_stat),
+                                'p_value': float(p_value),
+                                'mean_group1': float(data1.mean()),
+                                'mean_group2': float(data2.mean()),
+                                'std_group1': float(data1.std()),
+                                'std_group2': float(data2.std()),
+                                'n_group1': int(len(data1)),
+                                'n_group2': int(len(data2)),
+                                'mean_difference': float(data1.mean() - data2.mean()),
+                                'levene_statistic': float(levene_stat),
+                                'levene_p_value': float(levene_p),
+                                'cohens_d': float(cohens_d),
+                                'shapiro_p1': float(shapiro_p1) if shapiro_p1 else None,
+                                'shapiro_p2': float(shapiro_p2) if shapiro_p2 else None,
+                                'data1': data1.tolist(),
+                                'data2': data2.tolist(),
+                                'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
+                            }
                         
-                        # Visualização
-                        fig = go.Figure()
-                        fig.add_trace(go.Box(y=data1, name=group1))
-                        fig.add_trace(go.Box(y=data2, name=group2))
-                        fig.update_layout(title=f"Comparação: {group1} vs {group2}")
-                        st.plotly_chart(fig, use_container_width=True)
+                        # Recuperar resultados
+                        results = st.session_state.get('hypothesis_results', None)
+                        
+                        if results:
+                            # Métricas principais
+                            st.subheader("📊 Resultados do Teste")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Estatística t", f"{results['t_statistic']:.4f}")
+                                st.metric("Valor p", f"{results['p_value']:.4f}")
+                            
+                            with col2:
+                                st.metric(f"Média {results['group1']}", f"{results['mean_group1']:.3f}")
+                                st.metric(f"Desvio Padrão", f"{results['std_group1']:.3f}")
+                            
+                            with col3:
+                                st.metric(f"Média {results['group2']}", f"{results['mean_group2']:.3f}")
+                                st.metric(f"Desvio Padrão", f"{results['std_group2']:.3f}")
+                            
+                            with col4:
+                                st.metric("Diferença de Médias", f"{results['mean_difference']:.3f}")
+                                st.metric("Tamanho do Efeito (d)", f"{results['cohens_d']:.3f}")
+                            
+                            # Conclusão destacada
+                            st.divider()
+                            if results['conclusion'] == 'reject_h0':
+                                st.error(f"**❌ Rejeitar H₀:** Existe diferença significativa entre os grupos (p={results['p_value']:.4f} < α={results['alpha']})")
+                            else:
+                                st.success(f"**✅ Não Rejeitar H₀:** Não há evidência de diferença significativa entre os grupos (p={results['p_value']:.4f} ≥ α={results['alpha']})")
+                            
+                            # Pressupostos do teste
+                            st.subheader("📋 Verificação de Pressupostos")
+                            
+                            col_pres1, col_pres2 = st.columns(2)
+                            
+                            with col_pres1:
+                                st.write("**Homogeneidade de Variâncias (Teste de Levene):**")
+                                st.metric("Estatística de Levene", f"{results['levene_statistic']:.4f}")
+                                st.metric("Valor p (Levene)", f"{results['levene_p_value']:.4f}")
+                                
+                                if results['levene_p_value'] > 0.05:
+                                    st.info("✅ Variâncias homogêneas (pressuposto atendido)")
+                                else:
+                                    st.warning("⚠️ Variâncias heterogêneas (considerar teste de Welch)")
+                            
+                            with col_pres2:
+                                st.write("**Normalidade (Teste de Shapiro-Wilk):**")
+                                if results['shapiro_p1'] and results['shapiro_p2']:
+                                    st.metric(f"Valor p {results['group1']}", f"{results['shapiro_p1']:.4f}")
+                                    st.metric(f"Valor p {results['group2']}", f"{results['shapiro_p2']:.4f}")
+                                    
+                                    if results['shapiro_p1'] > 0.05 and results['shapiro_p2'] > 0.05:
+                                        st.info("✅ Ambos os grupos seguem distribuição normal")
+                                    else:
+                                        st.warning("⚠️ Pelo menos um grupo não segue distribuição normal (considerar teste não-paramétrico)")
+                                else:
+                                    st.info("ℹ️ Amostra muito grande para teste de Shapiro-Wilk")
+                            
+                            # Visualizações
+                            st.subheader("📈 Visualizações")
+                            
+                            col_viz1, col_viz2 = st.columns(2)
+                            
+                            with col_viz1:
+                                # Box plot
+                                fig_box = go.Figure()
+                                fig_box.add_trace(go.Box(
+                                    y=results['data1'], 
+                                    name=results['group1'],
+                                    marker_color='lightblue',
+                                    boxmean='sd'
+                                ))
+                                fig_box.add_trace(go.Box(
+                                    y=results['data2'], 
+                                    name=results['group2'],
+                                    marker_color='lightcoral',
+                                    boxmean='sd'
+                                ))
+                                fig_box.update_layout(
+                                    title=f"Comparação: {results['group1']} vs {results['group2']}",
+                                    yaxis_title=results['value_col'],
+                                    showlegend=True,
+                                    height=400
+                                )
+                                st.plotly_chart(fig_box, use_container_width=True)
+                            
+                            with col_viz2:
+                                # Violin plot
+                                fig_violin = go.Figure()
+                                fig_violin.add_trace(go.Violin(
+                                    y=results['data1'], 
+                                    name=results['group1'],
+                                    box_visible=True,
+                                    meanline_visible=True,
+                                    fillcolor='lightblue',
+                                    opacity=0.6
+                                ))
+                                fig_violin.add_trace(go.Violin(
+                                    y=results['data2'], 
+                                    name=results['group2'],
+                                    box_visible=True,
+                                    meanline_visible=True,
+                                    fillcolor='lightcoral',
+                                    opacity=0.6
+                                ))
+                                fig_violin.update_layout(
+                                    title="Distribuição dos Dados",
+                                    yaxis_title=results['value_col'],
+                                    height=400
+                                )
+                                st.plotly_chart(fig_violin, use_container_width=True)
+                            
+                            # Interpretação do tamanho do efeito
+                            st.subheader("💡 Interpretação do Tamanho do Efeito (Cohen's d)")
+                            
+                            d_abs = abs(results['cohens_d'])
+                            if d_abs < 0.2:
+                                effect_interpretation = "**Efeito Trivial** (d < 0.2)"
+                                effect_color = "blue"
+                            elif d_abs < 0.5:
+                                effect_interpretation = "**Efeito Pequeno** (0.2 ≤ d < 0.5)"
+                                effect_color = "green"
+                            elif d_abs < 0.8:
+                                effect_interpretation = "**Efeito Médio** (0.5 ≤ d < 0.8)"
+                                effect_color = "orange"
+                            else:
+                                effect_interpretation = "**Efeito Grande** (d ≥ 0.8)"
+                                effect_color = "red"
+                            
+                            st.markdown(f":{effect_color}[{effect_interpretation}]")
+                            
+                            interpretation_text = f"""
+                            **Resumo da Análise:**
+                            
+                            - **Teste Realizado:** {results['test_type']}
+                            - **Variável Analisada:** {results['value_col']}
+                            - **Grupos Comparados:** {results['group1']} vs {results['group2']}
+                            - **Tamanho das Amostras:** n₁={results['n_group1']}, n₂={results['n_group2']}
+                            - **Diferença Observada:** {results['mean_difference']:.3f} unidades
+                            - **Significância Estatística:** {'Sim' if results['conclusion'] == 'reject_h0' else 'Não'} (α={results['alpha']})
+                            - **Relevância Prática:** {effect_interpretation}
+                            
+                            {'A diferença observada é estatisticamente significativa E possui relevância prática.' if results['conclusion'] == 'reject_h0' and d_abs >= 0.5 else 'Considere tanto a significância estatística quanto o tamanho do efeito ao tomar decisões.'}
+                            """
+                            
+                            st.info(interpretation_text)
+                    
+                    # Salvar análise
+                    if save_test:
+                        results = st.session_state.get('hypothesis_results', None)
+                        if results:
+                            if save_analysis_to_db(project_name, "hypothesis_test", results):
+                                st.success("✅ Teste de hipóteses salvo com sucesso no Supabase!")
+                            else:
+                                st.error("❌ Falha ao salvar a análise.")
+                        else:
+                            st.warning("⚠️ Execute o teste antes de salvar.")
+                    
+                    # Exportar resultados
+                    if export_test:
+                        results = st.session_state.get('hypothesis_results', None)
+                        if results:
+                            # Criar relatório completo
+                            report = f"""
+TESTE DE HIPÓTESES - RELATÓRIO COMPLETO
+========================================
+
+INFORMAÇÕES DO TESTE:
+- Tipo de Teste: {results['test_type']}
+- Variável Analisada: {results['value_col']}
+- Variável de Agrupamento: {results['group_col']}
+- Grupo 1: {results['group1']}
+- Grupo 2: {results['group2']}
+- Nível de Significância (α): {results['alpha']}
+
+RESULTADOS ESTATÍSTICOS:
+- Estatística t: {results['t_statistic']:.4f}
+- Valor p: {results['p_value']:.4f}
+- Conclusão: {'Rejeitar H₀' if results['conclusion'] == 'reject_h0' else 'Não Rejeitar H₀'}
+
+ESTATÍSTICAS DESCRITIVAS:
+Grupo {results['group1']}:
+  - Média: {results['mean_group1']:.3f}
+  - Desvio Padrão: {results['std_group1']:.3f}
+  - N: {results['n_group1']}
+
+Grupo {results['group2']}:
+  - Média: {results['mean_group2']:.3f}
+  - Desvio Padrão: {results['std_group2']:.3f}
+  - N: {results['n_group2']}
+
+ANÁLISE DE EFEITO:
+- Diferença de Médias: {results['mean_difference']:.3f}
+- Tamanho do Efeito (Cohen's d): {results['cohens_d']:.3f}
+
+PRESSUPOSTOS:
+- Teste de Levene (Homogeneidade): p={results['levene_p_value']:.4f}
+"""
+                            if results['shapiro_p1'] and results['shapiro_p2']:
+                                report += f"- Teste de Shapiro-Wilk {results['group1']}: p={results['shapiro_p1']:.4f}\n"
+                                report += f"- Teste de Shapiro-Wilk {results['group2']}: p={results['shapiro_p2']:.4f}\n"
+                            
+                            report += f"\nDADOS BRUTOS:\n"
+                            
+                            # Criar DataFrame com dados
+                            max_len = max(len(results['data1']), len(results['data2']))
+                            export_df = pd.DataFrame({
+                                f'{results["group1"]}': results['data1'] + [None]*(max_len - len(results['data1'])),
+                                f'{results["group2"]}': results['data2'] + [None]*(max_len - len(results['data2']))
+                            })
+                            
+                            csv = report + "\n" + export_df.to_csv(index=False)
+                            
+                            st.download_button(
+                                label="📥 Download Relatório Completo (CSV)",
+                                data=csv.encode('utf-8'),
+                                file_name=f"teste_hipoteses_{results['group1']}_vs_{results['group2']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
+                        else:
+                            st.warning("⚠️ Execute o teste antes de exportar.")
+                else:
+                    st.warning("⚠️ São necessários pelo menos 2 grupos diferentes para o teste.")
+            else:
+                st.warning("⚠️ São necessárias variáveis numéricas e categóricas para este teste.")
+        
+        else:
+            st.info(f"ℹ️ Configuração para '{test_type}' em desenvolvimento. Por enquanto, use 'Teste t (2 amostras)'.")
+    
+    else:
+        st.info("📊 Carregue dados primeiro para realizar testes de hipóteses.")
+
+
+#######################################################################################################################################################################################################################################################################
 
 # ========================= TAB 6: NORMALIDADE =========================
 with tabs[5]:
