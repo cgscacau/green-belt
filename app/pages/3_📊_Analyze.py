@@ -3569,200 +3569,43 @@ PLANO DE AÇÃO - 5W2H:
 
 ################################################################################################################################################################################################################################
 
-# ========================= TAB 12: FMEA (LAYOUT AMIGÁVEL + SALVAMENTO) =========================
+# ========================= TAB 12: FMEA (ORIGINAL + SALVAMENTO) =========================
 with tabs[11]:
-    st.header("⚠️ FMEA - Análise de Modos de Falha e Efeitos")
+    st.header("📋 FMEA - Análise de Modo e Efeito de Falha")
     
-    # Verificar se há projeto selecionado
+    # Verificar projeto
     project_name = st.session_state.get('project_name', None)
     
     if not project_name:
-        st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
+        st.warning("⚠️ Nenhum projeto selecionado.")
         st.stop()
     
-    # Inicializar session_state
-    if 'fmea_items' not in st.session_state:
-        st.session_state.fmea_items = []
+    # Botões de gerenciamento (discretos no topo)
+    col_btn1, col_btn2, col_btn3, col_btn4, col_space = st.columns([1, 1, 1, 1, 2])
     
-    # Botões superiores (mais discretos)
-    col_load, col_history, col_new, col_space = st.columns([1, 1, 1, 2])
-    
-    with col_load:
-        if st.button("📂 Carregar", use_container_width=True, key="load_fmea_btn"):
-            if not supabase:
-                st.error("❌ Conexão com Supabase não disponível.")
-            else:
+    with col_btn1:
+        if st.button("📂 Carregar", key="load_fmea_btn"):
+            if supabase:
                 try:
                     response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'fmea').order('created_at', desc=True).limit(1).execute()
-                    
                     if response.data and len(response.data) > 0:
                         loaded_data = response.data[0].get('results') or response.data[0].get('data')
                         if loaded_data and 'fmea_items' in loaded_data:
                             st.session_state.fmea_items = loaded_data['fmea_items']
                             st.success("✅ FMEA carregado!")
                             st.rerun()
+                        else:
+                            st.info("ℹ️ Nenhum dado encontrado.")
                     else:
                         st.info("ℹ️ Nenhum FMEA salvo.")
                 except Exception as e:
-                    st.error(f"❌ Erro: {str(e)}")
+                    st.error(f"Erro: {str(e)}")
+            else:
+                st.error("Conexão indisponível.")
     
-    with col_history:
-        show_history = st.button("📚 Histórico", use_container_width=True, key="show_fmea_history_btn")
-    
-    with col_new:
-        if st.button("🆕 Novo", use_container_width=True, key="new_fmea_btn"):
-            st.session_state.fmea_items = []
-            st.rerun()
-    
-    # Histórico (colapsável)
-    if show_history:
-        with st.expander("📚 Histórico de FMEAs", expanded=True):
-            if supabase:
-                try:
-                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'fmea').order('created_at', desc=True).execute()
-                    
-                    if response.data:
-                        for idx, item in enumerate(response.data):
-                            data = item.get('results') or item.get('data')
-                            created_at = item.get('created_at', '')[:10]
-                            
-                            if data and 'fmea_items' in data:
-                                col1, col2 = st.columns([3, 1])
-                                col1.write(f"**FMEA {idx+1}** - {created_at} ({len(data['fmea_items'])} itens)")
-                                if col2.button("Carregar", key=f"load_hist_{idx}"):
-                                    st.session_state.fmea_items = data['fmea_items']
-                                    st.rerun()
-                    else:
-                        st.info("Nenhum histórico encontrado.")
-                except:
-                    st.error("Erro ao buscar histórico.")
-    
-    st.divider()
-    
-    # Botão de adicionar (destaque)
-    if st.button("➕ Adicionar Item ao FMEA", key="add_fmea_item_btn", type="primary"):
-        st.session_state.fmea_items.append({
-            'process': '',
-            'failure_mode': '',
-            'effects': '',
-            'severity': 5,
-            'causes': '',
-            'occurrence': 5,
-            'current_controls': '',
-            'detection': 5,
-            'rpn': 125,
-            'actions': ''
-        })
-        st.rerun()
-    
-    # Mostrar itens existentes
-    if not st.session_state.fmea_items:
-        st.info("💡 Clique em 'Adicionar Item ao FMEA' para começar a análise.")
-    else:
-        st.write(f"**Total de itens:** {len(st.session_state.fmea_items)}")
-        
-        # Tabela resumida no topo
-        if len(st.session_state.fmea_items) > 0:
-            summary_data = []
-            for idx, item in enumerate(st.session_state.fmea_items):
-                summary_data.append({
-                    '#': idx + 1,
-                    'Processo': item.get('process', 'N/A')[:25],
-                    'S': item.get('severity', 0),
-                    'O': item.get('occurrence', 0),
-                    'D': item.get('detection', 0),
-                    'RPN': item.get('rpn', 0)
-                })
-            
-            summary_df = pd.DataFrame(summary_data)
-            st.dataframe(summary_df, use_container_width=True, hide_index=True)
-        
-        st.divider()
-        
-        # Formulário de cada item (layout original simplificado)
-        for idx, item in enumerate(st.session_state.fmea_items):
-            with st.expander(f"Item {idx + 1}: {item.get('process', 'Novo Item')[:40]} (RPN: {item.get('rpn', 0)})", expanded=False):
-                
-                # Botão remover (discreto no canto)
-                if st.button("🗑️", key=f"del_{idx}", help="Remover este item"):
-                    st.session_state.fmea_items.pop(idx)
-                    st.rerun()
-                
-                # Campos do FMEA (layout limpo)
-                process = st.text_input("Processo/Função", value=item.get('process', ''), key=f"proc_{idx}")
-                st.session_state.fmea_items[idx]['process'] = process
-                
-                failure_mode = st.text_area("Modo de Falha Potencial", value=item.get('failure_mode', ''), key=f"fail_{idx}", height=60)
-                st.session_state.fmea_items[idx]['failure_mode'] = failure_mode
-                
-                effects = st.text_area("Efeitos da Falha", value=item.get('effects', ''), key=f"eff_{idx}", height=60)
-                st.session_state.fmea_items[idx]['effects'] = effects
-                
-                # Severidade (S)
-                severity = st.slider("Severidade (S)", 1, 10, item.get('severity', 5), key=f"sev_{idx}")
-                st.session_state.fmea_items[idx]['severity'] = severity
-                
-                causes = st.text_area("Causas Potenciais", value=item.get('causes', ''), key=f"cau_{idx}", height=60)
-                st.session_state.fmea_items[idx]['causes'] = causes
-                
-                # Ocorrência (O)
-                occurrence = st.slider("Ocorrência (O)", 1, 10, item.get('occurrence', 5), key=f"occ_{idx}")
-                st.session_state.fmea_items[idx]['occurrence'] = occurrence
-                
-                controls = st.text_area("Controles Atuais", value=item.get('current_controls', ''), key=f"ctrl_{idx}", height=60)
-                st.session_state.fmea_items[idx]['current_controls'] = controls
-                
-                # Detecção (D)
-                detection = st.slider("Detecção (D)", 1, 10, item.get('detection', 5), key=f"det_{idx}")
-                st.session_state.fmea_items[idx]['detection'] = detection
-                
-                # Calcular RPN
-                rpn = severity * occurrence * detection
-                st.session_state.fmea_items[idx]['rpn'] = rpn
-                
-                # Mostrar RPN com cor
-                if rpn >= 100:
-                    st.error(f"🔴 **RPN: {rpn}** - ALTO RISCO")
-                elif rpn >= 50:
-                    st.warning(f"🟡 **RPN: {rpn}** - Risco Moderado")
-                else:
-                    st.success(f"🟢 **RPN: {rpn}** - Risco Baixo")
-                
-                actions = st.text_area("Ações Recomendadas", value=item.get('actions', ''), key=f"act_{idx}", height=60)
-                st.session_state.fmea_items[idx]['actions'] = actions
-    
-    st.divider()
-    
-    # Análise e visualização (se houver itens)
-    if st.session_state.fmea_items:
-        st.subheader("📊 Análise")
-        
-        rpn_values = [item.get('rpn', 0) for item in st.session_state.fmea_items]
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("RPN Médio", f"{np.mean(rpn_values):.0f}")
-        col2.metric("RPN Máximo", max(rpn_values))
-        col3.metric("Itens Alto Risco", len([r for r in rpn_values if r >= 100]))
-        
-        # Gráfico simples
-        if len(st.session_state.fmea_items) > 1:
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=[f"Item {i+1}" for i in range(len(st.session_state.fmea_items))],
-                y=rpn_values,
-                marker_color=['red' if r >= 100 else 'orange' if r >= 50 else 'green' for r in rpn_values]
-            ))
-            fig.update_layout(title="RPN por Item", xaxis_title="Itens", yaxis_title="RPN", height=300)
-            st.plotly_chart(fig, use_container_width=True)
-    
-    st.divider()
-    
-    # Botões de ação (linha única)
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("💾 Salvar FMEA", use_container_width=True, type="primary", key="save_fmea_final"):
-            if st.session_state.fmea_items:
+    with col_btn2:
+        if st.button("💾 Salvar", key="save_fmea_btn"):
+            if 'fmea_items' in st.session_state and st.session_state.fmea_items:
                 fmea_data = {
                     'fmea_items': st.session_state.fmea_items,
                     'timestamp': datetime.now().isoformat()
@@ -3774,9 +3617,9 @@ with tabs[11]:
             else:
                 st.warning("⚠️ Nenhum item para salvar.")
     
-    with col2:
-        if st.button("📥 Exportar CSV", use_container_width=True, key="export_fmea_final"):
-            if st.session_state.fmea_items:
+    with col_btn3:
+        if st.button("📥 Exportar", key="export_fmea_btn"):
+            if 'fmea_items' in st.session_state and st.session_state.fmea_items:
                 df = pd.DataFrame(st.session_state.fmea_items)
                 csv = df.to_csv(index=False).encode('utf-8')
                 st.download_button(
@@ -3784,15 +3627,86 @@ with tabs[11]:
                     csv,
                     f"fmea_{datetime.now().strftime('%Y%m%d')}.csv",
                     "text/csv",
-                    key="dl_fmea"
+                    key="dl_fmea_csv"
                 )
             else:
                 st.warning("⚠️ Nenhum item para exportar.")
     
-    with col3:
-        if st.button("🗑️ Limpar Tudo", use_container_width=True, key="clear_fmea_final"):
+    with col_btn4:
+        if st.button("🗑️ Limpar", key="clear_fmea_btn"):
             st.session_state.fmea_items = []
             st.rerun()
+    
+    st.divider()
+    
+    # Formulário original
+    with st.form("fmea_form"):
+        st.subheader("Adicionar Modo de Falha")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            process_step = st.text_input("Etapa do Processo")
+            failure_mode = st.text_input("Modo de Falha")
+            failure_effect = st.text_area("Efeito da Falha")
+        
+        with col2:
+            severity = st.slider("Severidade (1-10)", 1, 10, 5)
+            occurrence = st.slider("Ocorrência (1-10)", 1, 10, 5)
+            detection = st.slider("Detecção (1-10)", 1, 10, 5)
+        
+        with col3:
+            cause = st.text_area("Causa Potencial")
+            current_controls = st.text_area("Controles Atuais")
+            recommended_actions = st.text_area("Ações Recomendadas")
+        
+        submitted = st.form_submit_button("Adicionar")
+        
+        if submitted:
+            rpn = severity * occurrence * detection
+            
+            if 'fmea_items' not in st.session_state:
+                st.session_state.fmea_items = []
+            
+            st.session_state.fmea_items.append({
+                'process_step': process_step,
+                'failure_mode': failure_mode,
+                'failure_effect': failure_effect,
+                'severity': severity,
+                'occurrence': occurrence,
+                'detection': detection,
+                'rpn': rpn,
+                'cause': cause,
+                'current_controls': current_controls,
+                'recommended_actions': recommended_actions
+            })
+            
+            st.success(f"✅ Adicionado! RPN = {rpn}")
+            st.rerun()
+    
+    # Exibir FMEA
+    if 'fmea_items' in st.session_state and st.session_state.fmea_items:
+        st.subheader("📊 Tabela FMEA")
+        
+        fmea_df = pd.DataFrame(st.session_state.fmea_items)
+        fmea_df = fmea_df.sort_values('rpn', ascending=False)
+        
+        # Colorir por RPN
+        def color_rpn(val):
+            if val >= 100:
+                return 'background-color: #ff4444'
+            elif val >= 50:
+                return 'background-color: #ffaa00'
+            else:
+                return 'background-color: #44ff44'
+        
+        styled_df = fmea_df.style.applymap(color_rpn, subset=['rpn'])
+        st.dataframe(styled_df, use_container_width=True)
+        
+        # Gráfico de Pareto dos RPNs
+        fig = px.bar(fmea_df.head(10), x='failure_mode', y='rpn',
+                    title='Top 10 Modos de Falha por RPN')
+        st.plotly_chart(fig, use_container_width=True)
 
 
 
