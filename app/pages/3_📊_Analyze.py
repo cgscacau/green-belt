@@ -3156,7 +3156,8 @@ GRUPOS:
 
 
 ################################################################################################################################################################################################################################
-# ========================= TAB 11: 5 PORQUÊS (COM HISTÓRICO) =========================
+
+# ========================= TAB 11: 5 PORQUÊS (SEM RESET) =========================
 with tabs[10]:
     st.header("❓ Análise dos 5 Porquês")
     
@@ -3168,13 +3169,14 @@ with tabs[10]:
         st.stop()
     
     # Inicializar session_state para os campos
-    if 'five_whys_data' not in st.session_state:
-        st.session_state.five_whys_data = {
-            'problem': '',
-            'whys': ['', '', '', '', ''],
-            'root_cause': '',
-            'action_plan': ''
-        }
+    if 'five_whys_problem' not in st.session_state:
+        st.session_state.five_whys_problem = ''
+    if 'five_whys_list' not in st.session_state:
+        st.session_state.five_whys_list = ['', '', '', '', '']
+    if 'five_whys_root' not in st.session_state:
+        st.session_state.five_whys_root = ''
+    if 'five_whys_action' not in st.session_state:
+        st.session_state.five_whys_action = ''
     
     # Botões superiores
     col_load, col_history, col_new = st.columns([1, 1, 1])
@@ -3192,12 +3194,10 @@ with tabs[10]:
                         loaded_data = loaded_item.get('results') or loaded_item.get('data')
                         
                         if loaded_data:
-                            st.session_state.five_whys_data = {
-                                'problem': loaded_data.get('problem', ''),
-                                'whys': loaded_data.get('whys', ['', '', '', '', '']),
-                                'root_cause': loaded_data.get('root_cause', ''),
-                                'action_plan': loaded_data.get('action_plan', '')
-                            }
+                            st.session_state.five_whys_problem = loaded_data.get('problem', '')
+                            st.session_state.five_whys_list = loaded_data.get('whys', ['', '', '', '', ''])
+                            st.session_state.five_whys_root = loaded_data.get('root_cause', '')
+                            st.session_state.five_whys_action = loaded_data.get('action_plan', '')
                             st.success("✅ Análise carregada com sucesso!")
                             st.rerun()
                         else:
@@ -3212,12 +3212,10 @@ with tabs[10]:
     
     with col_new:
         if st.button("🆕 Nova Análise", use_container_width=True, key="new_5why_btn"):
-            st.session_state.five_whys_data = {
-                'problem': '',
-                'whys': ['', '', '', '', ''],
-                'root_cause': '',
-                'action_plan': ''
-            }
+            st.session_state.five_whys_problem = ''
+            st.session_state.five_whys_list = ['', '', '', '', '']
+            st.session_state.five_whys_root = ''
+            st.session_state.five_whys_action = ''
             st.rerun()
     
     st.divider()
@@ -3252,37 +3250,33 @@ with tabs[10]:
                                 st.markdown(f"**Causa Raiz:** {data.get('root_cause', 'N/A')}")
                                 st.markdown(f"**Plano de Ação:** {data.get('action_plan', 'N/A')}")
                                 
-                                # Botão para carregar esta análise específica
                                 if st.button(f"📥 Carregar esta análise", key=f"load_specific_{idx}"):
-                                    st.session_state.five_whys_data = {
-                                        'problem': data.get('problem', ''),
-                                        'whys': data.get('whys', ['', '', '', '', '']),
-                                        'root_cause': data.get('root_cause', ''),
-                                        'action_plan': data.get('action_plan', '')
-                                    }
+                                    st.session_state.five_whys_problem = data.get('problem', '')
+                                    st.session_state.five_whys_list = data.get('whys', ['', '', '', '', ''])
+                                    st.session_state.five_whys_root = data.get('root_cause', '')
+                                    st.session_state.five_whys_action = data.get('action_plan', '')
                                     st.success("✅ Análise carregada!")
                                     st.rerun()
                             else:
-                                st.warning("Dados não disponíveis para esta análise.")
+                                st.warning("Dados não disponíveis.")
                 else:
-                    st.info("📭 Nenhuma análise dos 5 Porquês encontrada para este projeto.")
+                    st.info("📭 Nenhuma análise encontrada.")
             except Exception as e:
-                st.error(f"❌ Erro ao buscar histórico: {str(e)}")
+                st.error(f"❌ Erro: {str(e)}")
         
         st.divider()
     
-    # Formulário principal
+    # Formulário principal - SEM atualizar session_state diretamente
     st.subheader("🔍 Nova Análise dos 5 Porquês")
     
     # Problema
     problem = st.text_area(
         "**1️⃣ Defina o Problema:**",
-        value=st.session_state.five_whys_data['problem'],
+        value=st.session_state.five_whys_problem,
         height=100,
         placeholder="Descreva claramente o problema que precisa ser resolvido...",
-        key="problem_input"
+        key="problem_input_field"
     )
-    st.session_state.five_whys_data['problem'] = problem
     
     st.markdown("---")
     st.subheader("❓ Os 5 Porquês")
@@ -3293,19 +3287,17 @@ with tabs[10]:
     for i in range(5):
         why = st.text_area(
             f"**Por quê {i+1}?**",
-            value=st.session_state.five_whys_data['whys'][i],
-            key=f"why_{i}_input",
+            value=st.session_state.five_whys_list[i],
+            key=f"why_{i}_field",
             height=80,
             placeholder=f"Responda ao por quê {i+1}..."
         )
         whys.append(why)
-        st.session_state.five_whys_data['whys'][i] = why
         
-        # Indicador visual de progresso
         if why:
             st.success(f"✅ Por quê {i+1} preenchido")
         
-        if i < 4:  # Não mostrar após o último
+        if i < 4:
             st.markdown("⬇️")
     
     st.markdown("---")
@@ -3313,22 +3305,20 @@ with tabs[10]:
     # Causa Raiz
     root_cause = st.text_area(
         "**🎯 Causa Raiz Identificada:**",
-        value=st.session_state.five_whys_data['root_cause'],
+        value=st.session_state.five_whys_root,
         height=100,
         placeholder="Com base nos 5 porquês, qual é a causa raiz do problema?",
-        key="root_cause_input"
+        key="root_cause_field"
     )
-    st.session_state.five_whys_data['root_cause'] = root_cause
     
     # Plano de Ação
     action_plan = st.text_area(
         "**📋 Plano de Ação:**",
-        value=st.session_state.five_whys_data['action_plan'],
+        value=st.session_state.five_whys_action,
         height=100,
         placeholder="Descreva as ações que serão tomadas para eliminar a causa raiz...",
-        key="action_plan_input"
+        key="action_plan_field"
     )
-    st.session_state.five_whys_data['action_plan'] = action_plan
     
     st.divider()
     
@@ -3342,6 +3332,12 @@ with tabs[10]:
             elif not any(whys):
                 st.warning("⚠️ Preencha pelo menos um 'Por quê' antes de salvar.")
             else:
+                # Atualizar session_state SOMENTE ao salvar
+                st.session_state.five_whys_problem = problem
+                st.session_state.five_whys_list = whys
+                st.session_state.five_whys_root = root_cause
+                st.session_state.five_whys_action = action_plan
+                
                 analysis = {
                     "problem": problem,
                     "whys": whys,
@@ -3358,7 +3354,6 @@ with tabs[10]:
     with col_export:
         if st.button("📥 Exportar PDF/TXT", use_container_width=True, key="export_5why_btn"):
             if problem or any(whys):
-                # Criar relatório formatado
                 report = f"""
 ANÁLISE DOS 5 PORQUÊS
 =====================
@@ -3386,43 +3381,26 @@ PLANO DE AÇÃO:
                     label="📥 Download Relatório (TXT)",
                     data=report.encode('utf-8'),
                     file_name=f"5_porques_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain"
+                    mime="text/plain",
+                    key="download_5why_report"
                 )
             else:
                 st.warning("⚠️ Preencha a análise antes de exportar.")
     
     with col_clear:
         if st.button("🗑️ Limpar Tudo", use_container_width=True, key="clear_5why_btn"):
-            st.session_state.five_whys_data = {
-                'problem': '',
-                'whys': ['', '', '', '', ''],
-                'root_cause': '',
-                'action_plan': ''
-            }
+            st.session_state.five_whys_problem = ''
+            st.session_state.five_whys_list = ['', '', '', '', '']
+            st.session_state.five_whys_root = ''
+            st.session_state.five_whys_action = ''
             st.rerun()
     
-    # Visualização em diagrama (opcional)
+    # Visualização em diagrama
     if problem and any(whys):
         st.markdown("---")
         st.subheader("📊 Visualização da Cadeia de Causalidade")
         
-        # Criar visualização com Mermaid (diagrama de fluxo)
-        mermaid_code = "graph TD\n"
-        mermaid_code += f'    A["🔴 PROBLEMA<br/>{problem[:50]}..."] --> B1\n'
-        
         filled_whys = [(i, why) for i, why in enumerate(whys) if why]
-        
-        for idx, (i, why) in enumerate(filled_whys):
-            node_id = f"B{i+1}"
-            next_node = f"B{i+2}" if idx < len(filled_whys) - 1 else "C"
-            short_why = why[:40] + "..." if len(why) > 40 else why
-            mermaid_code += f'    {node_id}["❓ Por quê {i+1}?<br/>{short_why}"] --> {next_node}\n'
-        
-        if root_cause:
-            short_root = root_cause[:50] + "..." if len(root_cause) > 50 else root_cause
-            mermaid_code += f'    C["🎯 CAUSA RAIZ<br/>{short_root}"]\n'
-        
-        st.markdown(f"```mermaid\n{mermaid_code}\n```")
         
         # Resumo visual
         st.info(f"""
@@ -3432,7 +3410,22 @@ PLANO DE AÇÃO:
         - {'✅' if root_cause else '⚠️'} Causa raiz {'identificada' if root_cause else 'pendente'}
         - {'✅' if action_plan else '⚠️'} Plano de ação {'definido' if action_plan else 'pendente'}
         """)
-
+        
+        # Diagrama visual simples
+        st.markdown("**Fluxo da Análise:**")
+        st.markdown(f"🔴 **Problema:** {problem[:100]}...")
+        
+        for i, why in filled_whys:
+            st.markdown(f"⬇️")
+            st.markdown(f"❓ **Por quê {i+1}:** {why[:100]}...")
+        
+        if root_cause:
+            st.markdown(f"⬇️")
+            st.markdown(f"🎯 **CAUSA RAIZ:** {root_cause[:100]}...")
+        
+        if action_plan:
+            st.markdown(f"⬇️")
+            st.markdown(f"📋 **AÇÃO:** {action_plan[:100]}...")
 
 
 ################################################################################################################################################################################################################################
