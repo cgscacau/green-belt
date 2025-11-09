@@ -115,7 +115,7 @@ with st.sidebar:
     else:
         st.info("Nenhum projeto encontrado")
         if st.button("➕ Criar Primeiro Projeto"):
-            st.switch_page("pages/1_📋_Define.py")
+            st.switch_page("pages/1_🔎_Define.py")
     
     # Mostrar informações do projeto ativo
     if 'project_name' in st.session_state and st.session_state.project_name != "Novo Projeto...":
