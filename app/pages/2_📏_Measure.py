@@ -2154,6 +2154,3 @@ st.caption("📏 Fase Measure | Green Belt Project Management System")
 
 
 ############################################################################################################################################################################################################################################
-
-st.divider()
-st.caption("💡 **Dica:** Garanta que o sistema de medição é confiável antes de coletar dados para análise")
