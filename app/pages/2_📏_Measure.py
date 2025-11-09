@@ -1095,47 +1095,119 @@ CONCLUSÃO:
 # ========================= TAB 3: PROCESS CAPABILITY =========================
 
 with tab3:
-    st.header("Process Capability Analysis")
+    st.header("📊 Process Capability Analysis")
+    st.markdown("**Objetivo:** Avaliar se o processo é capaz de atender às especificações")
     
-    uploaded_file = st.file_uploader(
-        "Faça upload dos dados do processo (CSV, Excel)",
-        type=['csv', 'xlsx', 'xls'],
-        key="process_upload"
-    )
+    st.divider()
+    
+    # Informações sobre Capacidade
+    with st.expander("ℹ️ O que é Análise de Capacidade?"):
+        st.markdown("""
+        **Análise de Capacidade** avalia se o processo consegue produzir dentro das especificações.
+        
+        **Índices Principais:**
+        - **Cp:** Capacidade potencial (ignora centralização)
+        - **Cpk:** Capacidade real (considera centralização)
+        - **Pp/Ppk:** Performance do processo
+        
+        **Critérios de Aceitação:**
+        - **Cpk ≥ 1.33:** Processo **CAPAZ**
+        - **1.0 ≤ Cpk < 1.33:** **MARGINALMENTE CAPAZ**
+        - **Cpk < 1.0:** Processo **NÃO CAPAZ**
+        
+        **PPM (Parts Per Million):** Quantidade esperada de defeitos por milhão
+        
+        **Nível Sigma:** Medida de qualidade (6σ = 3.4 PPM)
+        """)
+    
+    st.divider()
+    
+    # Upload de arquivo
+    col_upload1, col_upload2 = st.columns([2, 1])
+    
+    with col_upload1:
+        uploaded_file = st.file_uploader(
+            "📤 Faça upload dos dados do processo (CSV, Excel)",
+            type=['csv', 'xlsx', 'xls'],
+            help="Arquivo com dados de medições do processo",
+            key="process_upload"
+        )
+    
+    with col_upload2:
+        st.info("""
+        **Dados necessários:**
+        - Medições do processo
+        - Valores numéricos
+        - Mínimo 30 amostras
+        """)
     
     if uploaded_file is not None:
         try:
+            # Detectar extensão
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
-            if file_extension == 'csv':
-                process_data = pd.read_csv(uploaded_file)
-            elif file_extension in ['xlsx', 'xls']:
-                process_data = pd.read_excel(uploaded_file)
-            else:
-                st.error("❌ Formato não suportado")
-                st.stop()
+            st.info(f"📄 Arquivo: **{uploaded_file.name}**")
             
-            st.subheader("📊 Preview dos Dados Carregados")
-            st.dataframe(process_data.head(10), use_container_width=True)
+            # Ler arquivo
+            with st.spinner("Lendo arquivo..."):
+                if file_extension == 'csv':
+                    try:
+                        process_data = pd.read_csv(uploaded_file, encoding='utf-8')
+                    except UnicodeDecodeError:
+                        uploaded_file.seek(0)
+                        process_data = pd.read_csv(uploaded_file, encoding='latin-1')
+                        st.warning("⚠️ Arquivo lido com encoding latin-1")
+                
+                elif file_extension in ['xlsx', 'xls']:
+                    process_data = pd.read_excel(uploaded_file)
+                
+                else:
+                    st.error("❌ Formato não suportado")
+                    st.stop()
             
-            if st.checkbox("🧹 Tentar converter colunas automaticamente para numérico", value=True, key="auto_clean_process"):
-                process_data = auto_clean_numeric_columns(process_data)
+            st.success(f"✅ Arquivo carregado: {len(process_data)} linhas, {len(process_data.columns)} colunas")
+            
+            # Preview dos dados
+            st.subheader("📊 Preview dos Dados")
+            
+            col_prev1, col_prev2 = st.columns([3, 1])
+            
+            with col_prev1:
+                num_rows = st.slider("Linhas para visualizar:", 5, 50, 10, key="process_preview")
+            
+            with col_prev2:
+                st.metric("Total de Linhas", len(process_data))
+            
+            st.dataframe(process_data.head(num_rows), use_container_width=True)
+            
+            # Opção de conversão
+            if st.checkbox("🧹 Converter colunas automaticamente para numérico", value=True, key="auto_clean_process"):
+                with st.spinner("Convertendo..."):
+                    process_data = auto_clean_numeric_columns(process_data)
                 st.success("✅ Conversão automática aplicada")
             
-            if supabase and st.button("💾 Salvar dados do processo", key="save_process"):
-                process_data_clean = clean_dataframe_for_json(process_data)
-                if save_process_data(st.session_state.project_name, process_data_clean):
-                    st.success("✅ Dados salvos no projeto!")
+            # Salvar dados
+            if supabase:
+                if st.button("💾 Salvar dados do processo", key="save_process"):
+                    with st.spinner("Salvando..."):
+                        process_data_clean = clean_dataframe_for_json(process_data)
+                        if save_process_data(st.session_state.project_name, process_data_clean):
+                            st.success("✅ Dados salvos no projeto!")
+                            st.balloons()
+                        else:
+                            st.error("❌ Erro ao salvar")
             
-            st.subheader("📊 Análise de Capacidade do Processo")
+            st.divider()
             
+            # Detectar colunas numéricas
             all_cols = process_data.columns.tolist()
             numeric_cols = []
             
             for col in all_cols:
                 try:
-                    pd.to_numeric(process_data[col], errors='coerce')
-                    numeric_cols.append(col)
+                    test_numeric = pd.to_numeric(process_data[col], errors='coerce')
+                    if test_numeric.notna().sum() > 0:
+                        numeric_cols.append(col)
                 except:
                     pass
             
@@ -1143,138 +1215,438 @@ with tab3:
                 st.warning("⚠️ Nenhuma coluna numérica detectada. Mostrando todas.")
                 numeric_cols = all_cols
             
+            st.info(f"📊 Colunas numéricas detectadas: **{len(numeric_cols)}**")
+            
+            # ============= ANÁLISE DE CAPACIDADE =============
             if len(numeric_cols) > 0:
-                col1, col2 = st.columns([2, 1])
+                st.subheader("📊 Configuração da Análise")
                 
-                with col1:
-                    selected_col = st.selectbox("Selecione a variável:", numeric_cols, key="cap_col")
+                col_config1, col_config2 = st.columns([3, 2])
                 
-                with col2:
-                    col_lsl, col_usl = st.columns(2)
-                    with col_lsl:
-                        lsl = st.number_input("LSL", value=0.0, key="lsl")
-                    with col_usl:
-                        usl = st.number_input("USL", value=100.0, key="usl")
+                with col_config1:
+                    selected_col = st.selectbox(
+                        "📌 Selecione a variável do processo:",
+                        numeric_cols,
+                        key="cap_col"
+                    )
                 
-                if selected_col and usl > lsl:
-                    try:
-                        data = pd.to_numeric(process_data[selected_col], errors='coerce').dropna()
-                        
-                        if len(data) == 0:
-                            st.error("❌ A coluna selecionada não contém valores numéricos válidos")
-                            st.info("💡 Dica: Verifique se a coluna contém apenas números.")
-                            st.write("**Amostra dos dados originais:**")
-                            st.write(process_data[selected_col].head(10))
-                            st.stop()
-                        
-                        original_count = len(process_data[selected_col])
-                        valid_count = len(data)
-                        if original_count > valid_count:
-                            st.warning(f"⚠️ {original_count - valid_count} valores não numéricos foram removidos da análise")
-                        
-                        mean = data.mean()
-                        std = data.std()
-                        
-                        cp = (usl - lsl) / (6 * std)
-                        cpu = (usl - mean) / (3 * std)
-                        cpl = (mean - lsl) / (3 * std)
-                        cpk = min(cpu, cpl)
-                        
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        with col1:
-                            st.metric("Cp", f"{cp:.3f}")
-                            if cp >= 1.33:
-                                st.success("Capaz")
-                            elif cp >= 1.0:
-                                st.warning("Marginalmente capaz")
-                            else:
-                                st.error("Não capaz")
-                        
-                        with col2:
-                            st.metric("Cpk", f"{cpk:.3f}")
-                            if cpk >= 1.33:
-                                st.success("Capaz")
-                            elif cpk >= 1.0:
-                                st.warning("Marginalmente capaz")
-                            else:
-                                st.error("Não capaz")
-                        
-                        with col3:
-                            st.metric("Média", f"{mean:.3f}")
-                        
-                        with col4:
-                            st.metric("Desvio Padrão", f"{std:.3f}")
-                        
-                        st.subheader("📊 Distribuição do Processo")
-                        
-                        fig = go.Figure()
-                        
-                        fig.add_trace(go.Histogram(
-                            x=data,
-                            name='Dados',
-                            nbinsx=30,
-                            histnorm='probability density',
-                            marker_color='lightblue'
-                        ))
-                        
-                        x_range = np.linspace(data.min(), data.max(), 100)
-                        y_normal = norm.pdf(x_range, mean, std)
-                        
-                        fig.add_trace(go.Scatter(
-                            x=x_range,
-                            y=y_normal,
-                            mode='lines',
-                            name='Normal',
-                            line=dict(color='red', width=2)
-                        ))
-                        
-                        fig.add_vline(x=lsl, line_dash="dash", line_color="red",
-                                     annotation_text=f"LSL: {lsl}")
-                        fig.add_vline(x=usl, line_dash="dash", line_color="red",
-                                     annotation_text=f"USL: {usl}")
-                        fig.add_vline(x=mean, line_dash="dash", line_color="green",
-                                     annotation_text=f"Média: {mean:.2f}")
-                        
-                        fig.update_layout(
-                            title="Histograma com Limites de Especificação",
-                            xaxis_title="Valor",
-                            yaxis_title="Densidade",
-                            height=400
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        st.subheader("📈 Previsão de Defeitos")
-                        
-                        prob_below_lsl = norm.cdf(lsl, mean, std)
-                        prob_above_usl = 1 - norm.cdf(usl, mean, std)
-                        prob_defect = prob_below_lsl + prob_above_usl
-                        ppm = prob_defect * 1_000_000
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("PPM Total", f"{ppm:.0f}")
-                        with col2:
-                            st.metric("% Defeitos", f"{prob_defect*100:.3f}%")
-                        with col3:
+                with col_config2:
+                    # Info da coluna
+                    non_null = process_data[selected_col].notna().sum()
+                    st.metric("Valores Válidos", non_null)
+                    
+                    if non_null < 30:
+                        st.warning("⚠️ Recomendado: mínimo 30 amostras")
+                
+                # Especificações
+                st.markdown("**Limites de Especificação:**")
+                
+                col_spec1, col_spec2, col_spec3 = st.columns(3)
+                
+                with col_spec1:
+                    lsl = st.number_input(
+                        "LSL (Lower Spec Limit)",
+                        value=0.0,
+                        format="%.4f",
+                        help="Limite Inferior de Especificação",
+                        key="lsl"
+                    )
+                
+                with col_spec2:
+                    target = st.number_input(
+                        "Target (Valor Alvo)",
+                        value=50.0,
+                        format="%.4f",
+                        help="Valor ideal do processo",
+                        key="target"
+                    )
+                
+                with col_spec3:
+                    usl = st.number_input(
+                        "USL (Upper Spec Limit)",
+                        value=100.0,
+                        format="%.4f",
+                        help="Limite Superior de Especificação",
+                        key="usl"
+                    )
+                
+                # Validação
+                if lsl >= usl:
+                    st.error("❌ O LSL deve ser menor que o USL!")
+                    st.stop()
+                
+                if not (lsl <= target <= usl):
+                    st.warning("⚠️ O Target deve estar entre LSL e USL!")
+                
+                st.divider()
+                
+                # Botão para calcular
+                if st.button("🔄 Calcular Capacidade do Processo", type="primary", use_container_width=True):
+                    
+                    with st.spinner("Calculando índices de capacidade..."):
+                        try:
+                            # Converter e limpar dados
+                            data = pd.to_numeric(process_data[selected_col], errors='coerce').dropna()
+                            
+                            if len(data) == 0:
+                                st.error("❌ A coluna selecionada não contém valores numéricos válidos")
+                                st.info("💡 **Dica:** Verifique se a coluna contém apenas números.")
+                                
+                                with st.expander("🔍 Ver dados originais"):
+                                    st.dataframe(process_data[selected_col].head(20))
+                                
+                                st.stop()
+                            
+                            # Avisar sobre dados removidos
+                            original_count = len(process_data[selected_col])
+                            valid_count = len(data)
+                            
+                            if original_count > valid_count:
+                                st.warning(f"⚠️ {original_count - valid_count} valores não numéricos foram removidos")
+                            
+                            st.success(f"✅ Analisando {valid_count} medições válidas")
+                            
+                            # ============= CÁLCULOS =============
+                            mean = data.mean()
+                            std = data.std()
+                            median = data.median()
+                            
+                            # Índices de Capacidade
+                            cp = (usl - lsl) / (6 * std)
+                            cpu = (usl - mean) / (3 * std)
+                            cpl = (mean - lsl) / (3 * std)
+                            cpk = min(cpu, cpl)
+                            
+                            # Índices de Performance
+                            pp = (usl - lsl) / (6 * data.std(ddof=1))
+                            ppu = (usl - mean) / (3 * data.std(ddof=1))
+                            ppl = (mean - lsl) / (3 * data.std(ddof=1))
+                            ppk = min(ppu, ppl)
+                            
+                            # Cpm (considera target)
+                            tau = np.sqrt(std**2 + (mean - target)**2)
+                            cpm = (usl - lsl) / (6 * tau)
+                            
+                            # PPM e Sigma
+                            prob_below_lsl = norm.cdf(lsl, mean, std)
+                            prob_above_usl = 1 - norm.cdf(usl, mean, std)
+                            prob_defect = prob_below_lsl + prob_above_usl
+                            ppm = prob_defect * 1_000_000
                             sigma_level = 3 * cpk
-                            st.metric("Nível Sigma", f"{sigma_level:.1f}σ")
-                    
-                    except Exception as e:
-                        st.error(f"❌ Erro ao processar coluna: {str(e)}")
-                        st.stop()
-                    
+                            
+                            # Yield
+                            yield_pct = (1 - prob_defect) * 100
+                            
+                            # Contagem real
+                            below_lsl = len(data[data < lsl])
+                            above_usl = len(data[data > usl])
+                            total_out = below_lsl + above_usl
+                            
+                            st.divider()
+                            
+                            # ============= RESULTADOS =============
+                            st.subheader("📊 Índices de Capacidade")
+                            
+                            col1, col2, col3, col4, col5 = st.columns(5)
+                            
+                            with col1:
+                                st.metric("Cp", f"{cp:.3f}")
+                                if cp >= 1.33:
+                                    st.success("✅ Capaz")
+                                elif cp >= 1.0:
+                                    st.warning("⚠️ Marginal")
+                                else:
+                                    st.error("❌ Não capaz")
+                            
+                            with col2:
+                                st.metric("Cpk", f"{cpk:.3f}")
+                                if cpk >= 1.33:
+                                    st.success("✅ Capaz")
+                                elif cpk >= 1.0:
+                                    st.warning("⚠️ Marginal")
+                                else:
+                                    st.error("❌ Não capaz")
+                            
+                            with col3:
+                                st.metric("Pp", f"{pp:.3f}")
+                            
+                            with col4:
+                                st.metric("Ppk", f"{ppk:.3f}")
+                            
+                            with col5:
+                                st.metric("Cpm", f"{cpm:.3f}")
+                            
+                            st.divider()
+                            
+                            # ============= PERFORMANCE =============
+                            st.subheader("📈 Performance do Processo")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Nível Sigma", f"{sigma_level:.2f}σ")
+                            
+                            with col2:
+                                st.metric("Yield", f"{yield_pct:.2f}%")
+                            
+                            with col3:
+                                st.metric("PPM Esperado", f"{ppm:.0f}")
+                            
+                            with col4:
+                                st.metric("Fora de Spec", f"{total_out}")
+                            
+                            # Detalhes de não-conformidades
+                            if total_out > 0:
+                                st.divider()
+                                st.subheader("🔍 Análise de Não-Conformidades")
+                                
+                                col_nc1, col_nc2 = st.columns(2)
+                                
+                                with col_nc1:
+                                    st.metric("Abaixo do LSL", below_lsl)
+                                    st.caption(f"PPM: {prob_below_lsl * 1_000_000:.0f}")
+                                
+                                with col_nc2:
+                                    st.metric("Acima do USL", above_usl)
+                                    st.caption(f"PPM: {prob_above_usl * 1_000_000:.0f}")
+                            
+                            st.divider()
+                            
+                            # ============= ESTATÍSTICAS =============
+                            st.subheader("📊 Estatísticas Descritivas")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Média", f"{mean:.4f}")
+                            
+                            with col2:
+                                st.metric("Mediana", f"{median:.4f}")
+                            
+                            with col3:
+                                st.metric("Desvio Padrão", f"{std:.4f}")
+                            
+                            with col4:
+                                st.metric("Amostras", valid_count)
+                            
+                            st.divider()
+                            
+                            # ============= GRÁFICO DE DISTRIBUIÇÃO =============
+                            st.subheader("📊 Distribuição do Processo vs Especificações")
+                            
+                            fig = go.Figure()
+                            
+                            # Histograma
+                            fig.add_trace(go.Histogram(
+                                x=data,
+                                name='Dados',
+                                nbinsx=30,
+                                histnorm='probability density',
+                                marker_color='lightblue',
+                                opacity=0.7
+                            ))
+                            
+                            # Curva normal
+                            x_range = np.linspace(data.min() - std, data.max() + std, 200)
+                            y_normal = norm.pdf(x_range, mean, std)
+                            
+                            fig.add_trace(go.Scatter(
+                                x=x_range,
+                                y=y_normal,
+                                mode='lines',
+                                name='Distribuição Normal',
+                                line=dict(color='red', width=3)
+                            ))
+                            
+                            # Limites de especificação
+                            max_y = max(y_normal) * 1.1
+                            
+                            # Área de especificação
+                            fig.add_shape(
+                                type="rect",
+                                x0=lsl, x1=usl,
+                                y0=0, y1=max_y,
+                                fillcolor="green",
+                                opacity=0.1,
+                                line_width=0
+                            )
+                            
+                            # Linhas LSL, USL, Target, Média
+                            fig.add_vline(
+                                x=lsl,
+                                line_dash="dash",
+                                line_color="red",
+                                line_width=2,
+                                annotation_text=f"LSL: {lsl:.2f}"
+                            )
+                            
+                            fig.add_vline(
+                                x=usl,
+                                line_dash="dash",
+                                line_color="red",
+                                line_width=2,
+                                annotation_text=f"USL: {usl:.2f}"
+                            )
+                            
+                            fig.add_vline(
+                                x=target,
+                                line_dash="dot",
+                                line_color="blue",
+                                line_width=2,
+                                annotation_text=f"Target: {target:.2f}"
+                            )
+                            
+                            fig.add_vline(
+                                x=mean,
+                                line_dash="solid",
+                                line_color="green",
+                                line_width=2,
+                                annotation_text=f"Média: {mean:.2f}"
+                            )
+                            
+                            fig.update_layout(
+                                title="Histograma com Limites de Especificação",
+                                xaxis_title="Valor",
+                                yaxis_title="Densidade de Probabilidade",
+                                height=500,
+                                showlegend=True
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            st.divider()
+                            
+                            # ============= INTERPRETAÇÃO =============
+                            st.subheader("💡 Interpretação dos Resultados")
+                            
+                            if cpk >= 1.33:
+                                st.success("""
+                                ✅ **PROCESSO CAPAZ**
+                                
+                                - Cpk ≥ 1.33: Processo atende aos requisitos
+                                - Baixa probabilidade de defeitos
+                                - Continue monitorando o processo
+                                """)
+                            elif cpk >= 1.0:
+                                st.warning("""
+                                ⚠️ **PROCESSO MARGINALMENTE CAPAZ**
+                                
+                                - 1.0 ≤ Cpk < 1.33: Processo no limite
+                                - Monitore de perto
+                                - Considere melhorias
+                                """)
+                            else:
+                                st.error("""
+                                ❌ **PROCESSO NÃO CAPAZ**
+                                
+                                - Cpk < 1.0: Processo inadequado
+                                - Alta probabilidade de defeitos
+                                - **Ações necessárias:**
+                                  - Reduzir variação
+                                  - Centralizar processo
+                                  - Revisar especificações
+                                """)
+                            
+                            # Centralização
+                            process_center = (lsl + usl) / 2
+                            offset = mean - process_center
+                            offset_pct = (offset / ((usl - lsl) / 2)) * 100
+                            
+                            if abs(offset_pct) > 10:
+                                st.warning(f"⚠️ **Processo descentrado em {abs(offset_pct):.1f}%**")
+                            
+                            # Exportar relatório
+                            st.divider()
+                            
+                            if st.button("📥 Exportar Relatório Completo", use_container_width=True):
+                                report = f"""
+RELATÓRIO DE CAPACIDADE DO PROCESSO
+====================================
+
+Projeto: {st.session_state.project_name}
+Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+Variável: {selected_col}
+
+ESPECIFICAÇÕES:
+- LSL: {lsl:.4f}
+- Target: {target:.4f}
+- USL: {usl:.4f}
+- Tolerância: {usl - lsl:.4f}
+
+ESTATÍSTICAS:
+- N: {valid_count}
+- Média: {mean:.4f}
+- Mediana: {median:.4f}
+- Desvio Padrão: {std:.4f}
+
+ÍNDICES DE CAPACIDADE:
+- Cp: {cp:.3f}
+- Cpk: {cpk:.3f}
+- Pp: {pp:.3f}
+- Ppk: {ppk:.3f}
+- Cpm: {cpm:.3f}
+
+PERFORMANCE:
+- Nível Sigma: {sigma_level:.2f}σ
+- Yield: {yield_pct:.2f}%
+- PPM Total: {ppm:.0f}
+- Abaixo LSL: {below_lsl}
+- Acima USL: {above_usl}
+
+CONCLUSÃO:
+"""
+                                if cpk >= 1.33:
+                                    report += "Processo CAPAZ - Atende aos requisitos"
+                                elif cpk >= 1.0:
+                                    report += "Processo MARGINALMENTE CAPAZ - Monitorar"
+                                else:
+                                    report += "Processo NÃO CAPAZ - Requer melhorias"
+                                
+                                st.download_button(
+                                    label="📄 Download Relatório (TXT)",
+                                    data=report.encode('utf-8'),
+                                    file_name=f"capacidade_{selected_col}_{datetime.now().strftime('%Y%m%d')}.txt",
+                                    mime="text/plain"
+                                )
+                        
+                        except Exception as e:
+                            st.error(f"❌ Erro ao calcular capacidade: {str(e)}")
+                            
+                            with st.expander("🐛 Detalhes do Erro"):
+                                st.write("**Tipo:**", type(e).__name__)
+                                st.write("**Mensagem:**", str(e))
+        
         except Exception as e:
-            st.error(f"Erro ao processar arquivo: {str(e)}")
+            st.error(f"❌ Erro ao processar arquivo: {str(e)}")
+            
+            with st.expander("🐛 Detalhes do Erro"):
+                st.write("**Tipo:**", type(e).__name__)
+                st.write("**Mensagem:**", str(e))
+    
     else:
+        # Tentar carregar dados salvos
+        st.info("📤 Nenhum arquivo carregado. Faça upload dos dados do processo.")
+        
         if supabase:
             saved_data = load_process_data(st.session_state.project_name)
             if saved_data is not None:
-                st.info("📂 Dados anteriores encontrados")
-                if st.button("Carregar dados salvos", key="load_process"):
-                    st.session_state.process_data = saved_data
-                    st.rerun()
+                st.divider()
+                st.success("📂 Dados anteriores encontrados no projeto")
+                
+                col_load1, col_load2 = st.columns([1, 2])
+                
+                with col_load1:
+                    if st.button("📥 Carregar dados salvos", use_container_width=True, key="load_process"):
+                        st.session_state.process_data = saved_data
+                        st.rerun()
+                
+                with col_load2:
+                    st.caption(f"Dados salvos: {len(saved_data)} linhas, {len(saved_data.columns)} colunas")
+
+
+
+############################################################################################################################################################################################################################################
+
 
 # ========================= TAB 4: DATA VISUALIZATION =========================
 
