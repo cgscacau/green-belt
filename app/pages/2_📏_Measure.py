@@ -7,6 +7,7 @@ import numpy as np
 from scipy.stats import norm
 import os
 from supabase import create_client, Client
+import time
 
 # Configuração da página
 st.set_page_config(
@@ -41,8 +42,11 @@ supabase = init_supabase()
 def clean_dataframe_for_json(df):
     """Limpa DataFrame para ser compatível com JSON"""
     df_clean = df.copy()
+    
+    # Substituir valores problemáticos
     df_clean = df_clean.replace([np.nan, np.inf, -np.inf], None)
     
+    # Converter tipos de dados problemáticos
     for col in df_clean.columns:
         if df_clean[col].dtype == 'object':
             df_clean[col] = df_clean[col].astype(str)
@@ -108,45 +112,6 @@ def save_collection_plan(project_name, plan_data):
         st.error(f"Erro ao salvar plano: {str(e)}")
         return False
 
-def save_measurements(project_name, measurements_df):
-    """Salva medições no banco de dados"""
-    if not supabase:
-        return False
-    
-    try:
-        records = []
-        for idx, row in measurements_df.iterrows():
-            value = None
-            for col_val in row:
-                try:
-                    val = float(col_val)
-                    if not (np.isnan(val) or np.isinf(val)):
-                        value = val
-                        break
-                except (ValueError, TypeError):
-                    continue
-            
-            if value is not None:
-                record = {
-                    'project_name': project_name,
-                    'metric_name': 'measurement',
-                    'metric_value': value,
-                    'measurement_date': datetime.now().date().isoformat(),
-                    'created_at': datetime.now().isoformat()
-                }
-                records.append(record)
-        
-        if records:
-            response = supabase.table('measurements').insert(records).execute()
-            return True
-        else:
-            st.warning("⚠️ Nenhum valor numérico válido encontrado para salvar")
-            return False
-            
-    except Exception as e:
-        st.error(f"Erro ao salvar medições: {str(e)}")
-        return False
-
 def save_process_data(project_name, data_df):
     """Salva dados do processo no banco"""
     if not supabase:
@@ -170,21 +135,6 @@ def save_process_data(project_name, data_df):
         return False
 
 @st.cache_data(ttl=60)
-def load_measurements(project_name):
-    """Carrega medições do banco de dados"""
-    if not supabase:
-        return None
-    
-    try:
-        response = supabase.table('measurements').select("*").eq('project_name', project_name).execute()
-        if response.data:
-            return pd.DataFrame(response.data)
-        return None
-    except Exception as e:
-        st.error(f"Erro ao carregar medições: {str(e)}")
-        return None
-
-@st.cache_data(ttl=60)
 def load_process_data(project_name):
     """Carrega dados do processo do banco"""
     if not supabase:
@@ -201,26 +151,33 @@ def load_process_data(project_name):
         st.error(f"Erro ao carregar dados do processo: {str(e)}")
         return None
 
+############################################################################################################################################################################################################################################
 # ========================= SIDEBAR =========================
 
 with st.sidebar:
     st.header("🗂️ Seleção de Projeto")
     
+    # Verificar conexão com Supabase
     if not supabase:
         st.error("⚠️ Supabase não configurado")
-        use_local = st.checkbox("Usar modo local")
+        st.info("""
+        **Configure o Supabase:**
+        1. Adicione as credenciais em `.streamlit/secrets.toml`
+        2. Ou configure as variáveis de ambiente
+        """)
     else:
-        use_local = False
         st.success("✅ Conectado ao Supabase")
     
     st.divider()
     
+    # Listar e selecionar projetos
     if supabase:
         projects = list_projects()
         
         if projects:
             project_names = [p['project_name'] for p in projects]
             
+            # Determinar índice padrão
             default_index = 0
             if 'project_name' in st.session_state and st.session_state.project_name in project_names:
                 default_index = project_names.index(st.session_state.project_name) + 1
@@ -228,96 +185,257 @@ with st.sidebar:
             selected_project = st.selectbox(
                 "Selecione um projeto:",
                 [""] + project_names,
-                index=default_index
+                index=default_index,
+                key="sidebar_project_select"
             )
             
+            # Botão para carregar projeto
             if selected_project:
-                if st.button("📂 Carregar Projeto", type="primary"):
-                    project_data = load_project_from_db(selected_project)
-                    if project_data:
-                        st.session_state.project_name = selected_project
-                        st.session_state.project_data = project_data
-                        st.success(f"✅ Projeto '{selected_project}' carregado!")
-                        st.rerun()
+                if st.button("📂 Carregar Projeto", type="primary", use_container_width=True, key="load_project_btn"):
+                    with st.spinner("Carregando projeto..."):
+                        project_data = load_project_from_db(selected_project)
+                        if project_data:
+                            st.session_state.project_name = selected_project
+                            st.session_state.project_data = project_data
+                            st.success(f"✅ Projeto '{selected_project}' carregado!")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("❌ Erro ao carregar projeto")
         else:
-            st.warning("Nenhum projeto encontrado")
+            st.warning("📭 Nenhum projeto encontrado")
+            st.info("Crie um projeto na página **Define** primeiro")
     
+    # Mostrar projeto ativo
     if 'project_name' in st.session_state:
         st.divider()
-        st.success(f"📁 **Projeto Ativo:**")
-        st.write(f"_{st.session_state.project_name}_")
         
-        project_data = st.session_state.get('project_data', {})
-        if project_data:
-            st.caption(f"**Líder:** {project_data.get('project_leader', 'N/A')}")
-            st.caption(f"**Métrica:** {project_data.get('primary_metric', 'N/A')}")
+        # Card do projeto ativo
+        with st.container():
+            st.success("📁 **Projeto Ativo:**")
+            st.markdown(f"### {st.session_state.project_name}")
+            
+            project_data = st.session_state.get('project_data', {})
+            
+            if project_data:
+                # Informações do projeto
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.caption("👤 **Líder:**")
+                    st.write(project_data.get('project_leader', 'N/A'))
+                
+                with col2:
+                    st.caption("📊 **Status:**")
+                    status = project_data.get('status', 'N/A')
+                    if status == 'active':
+                        st.success("✅ Ativo")
+                    elif status == 'completed':
+                        st.info("🎯 Concluído")
+                    else:
+                        st.write(status)
+                
+                st.caption("📈 **Métrica Principal:**")
+                st.write(project_data.get('primary_metric', 'N/A'))
+                
+                # Dados do projeto
+                if project_data.get('baseline_value'):
+                    st.caption("📍 **Baseline:**")
+                    st.write(f"{project_data.get('baseline_value', 'N/A')}")
+                
+                if project_data.get('target_value'):
+                    st.caption("🎯 **Meta:**")
+                    st.write(f"{project_data.get('target_value', 'N/A')}")
+                
+                # Datas
+                if project_data.get('start_date'):
+                    st.caption("📅 **Início:**")
+                    st.write(project_data.get('start_date', 'N/A'))
+        
+        st.divider()
+        
+        # Botão para trocar de projeto
+        if st.button("🔄 Trocar Projeto", use_container_width=True, key="change_project_btn"):
+            if 'project_name' in st.session_state:
+                del st.session_state.project_name
+            if 'project_data' in st.session_state:
+                del st.session_state.project_data
+            st.rerun()
+    
+    # Rodapé da sidebar
+    st.divider()
+    st.caption("📏 **Fase:** Measure")
+    st.caption("🔧 **Green Belt Project**")
 
+############################################################################################################################################################################################################################################
 # ========================= INTERFACE PRINCIPAL =========================
 
 st.title("📏 Measure — Medição e Coleta de Dados")
+st.markdown("**Objetivo:** Coletar dados confiáveis para análise do processo")
 
+st.divider()
+
+# ============= VERIFICAÇÃO DE PROJETO =============
 if 'project_name' not in st.session_state:
-    st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto na página Define.")
+    st.warning("⚠️ Nenhum projeto selecionado.")
     
+    col_warn1, col_warn2 = st.columns([2, 1])
+    
+    with col_warn1:
+        st.info("""
+        **Para começar:**
+        1. 👈 Use a barra lateral para selecionar um projeto
+        2. Ou crie um novo projeto na página **Define**
+        """)
+    
+    with col_warn2:
+        if st.button("➕ Criar Novo Projeto", type="primary", use_container_width=True):
+            st.switch_page("pages/1_📋_Define.py")
+    
+    # Mostrar projetos disponíveis
     if supabase:
         projects = list_projects()
         if projects:
+            st.divider()
             st.subheader("📂 Projetos Disponíveis")
+            
+            # Criar DataFrame formatado
             df = pd.DataFrame(projects)
+            
+            # Renomear colunas para português
+            column_mapping = {
+                'project_name': 'Nome do Projeto',
+                'project_leader': 'Líder',
+                'status': 'Status'
+            }
+            
+            if all(col in df.columns for col in column_mapping.keys()):
+                df = df.rename(columns=column_mapping)
+            
             st.dataframe(df, use_container_width=True, hide_index=True)
-            st.info("👈 Use a barra lateral para selecionar um projeto")
+            
+            st.caption("💡 **Dica:** Selecione um projeto na barra lateral para começar")
+        else:
+            st.info("📭 Nenhum projeto encontrado. Crie um na página Define.")
+    
     st.stop()
 
-st.info(f"📁 Projeto: **{st.session_state.project_name}**")
+# ============= PROJETO SELECIONADO =============
+# Banner do projeto ativo
+col_banner1, col_banner2, col_banner3 = st.columns([2, 1, 1])
 
-if 'project_data' not in st.session_state:
-    project_data = load_project_from_db(st.session_state.project_name)
+with col_banner1:
+    st.info(f"📁 **Projeto Ativo:** {st.session_state.project_name}")
+
+with col_banner2:
+    # Carregar dados do projeto se não estiver em cache
+    if 'project_data' not in st.session_state:
+        with st.spinner("Carregando dados do projeto..."):
+            project_data = load_project_from_db(st.session_state.project_name)
+            if project_data:
+                st.session_state.project_data = project_data
+    
+    project_data = st.session_state.get('project_data', {})
+    
     if project_data:
-        st.session_state.project_data = project_data
+        metric = project_data.get('primary_metric', 'N/A')
+        st.metric("📊 Métrica", metric)
 
+with col_banner3:
+    if project_data:
+        baseline = project_data.get('baseline_value', 'N/A')
+        target = project_data.get('target_value', 'N/A')
+        
+        if baseline != 'N/A' and target != 'N/A':
+            try:
+                improvement = ((float(baseline) - float(target)) / float(baseline)) * 100
+                st.metric("🎯 Meta", f"{improvement:.1f}%")
+            except:
+                st.metric("🎯 Meta", "Definida")
+        else:
+            st.metric("🎯 Meta", "Não definida")
+
+st.divider()
+
+# ============= NAVEGAÇÃO POR TABS =============
 tab1, tab2, tab3, tab4 = st.tabs([
     "📋 Data Collection Plan",
-    "🔍 Measurement System Analysis",
+    "🔍 Measurement System Analysis (MSA)",
     "📊 Process Capability",
     "📈 Data Visualization"
 ])
 
+############################################################################################################################################################################################################################################
+# ========================= TAB 1: DATA COLLECTION PLAN =========================
+
 # ========================= TAB 1: DATA COLLECTION PLAN =========================
 
 with tab1:
-    st.header("Plano de Coleta de Dados")
+    st.header("📋 Plano de Coleta de Dados")
+    st.markdown("Defina **como**, **quando** e **quem** coletará os dados do processo")
+    
+    st.divider()
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
         with st.form("collection_plan_form", clear_on_submit=True):
-            st.subheader("Adicionar Plano de Coleta")
+            st.subheader("➕ Adicionar Novo Plano")
             
             col_form1, col_form2 = st.columns(2)
             
             with col_form1:
-                metric = st.text_input("Métrica a ser coletada *", 
-                                      value=st.session_state.get('project_data', {}).get('primary_metric', ''))
-                collection_method = st.selectbox(
-                    "Método de coleta",
-                    ["Manual", "Automático", "Sistema", "Inspeção", "Amostragem"]
+                metric = st.text_input(
+                    "Métrica a ser coletada *", 
+                    value=st.session_state.get('project_data', {}).get('primary_metric', ''),
+                    placeholder="Ex: Tempo de ciclo, Defeitos, Temperatura..."
                 )
+                
+                collection_method = st.selectbox(
+                    "Método de coleta *",
+                    ["Manual", "Automático", "Sistema", "Inspeção", "Amostragem", "Sensor"],
+                    help="Como os dados serão coletados"
+                )
+                
                 frequency = st.selectbox(
-                    "Frequência",
-                    ["Horária", "Diária", "Semanal", "Mensal", "Por lote", "Contínua"]
+                    "Frequência *",
+                    ["Horária", "Diária", "Semanal", "Mensal", "Por lote", "Contínua", "Sob demanda"],
+                    help="Com que frequência os dados serão coletados"
                 )
             
             with col_form2:
-                responsible = st.text_input("Responsável pela coleta *")
+                responsible = st.text_input(
+                    "Responsável pela coleta *",
+                    placeholder="Nome do responsável"
+                )
+                
                 col_date1, col_date2 = st.columns(2)
                 with col_date1:
-                    start_date = st.date_input("Data início", value=datetime.now())
+                    start_date = st.date_input(
+                        "Data início *", 
+                        value=datetime.now(),
+                        help="Quando a coleta começará"
+                    )
                 with col_date2:
-                    end_date = st.date_input("Data fim")
+                    end_date = st.date_input(
+                        "Data fim",
+                        help="Quando a coleta terminará (opcional)"
+                    )
+                
+                sample_size = st.number_input(
+                    "Tamanho da amostra",
+                    min_value=1,
+                    value=30,
+                    help="Quantidade de medições por coleta"
+                )
             
-            notes = st.text_area("Observações", height=80)
+            notes = st.text_area(
+                "Observações / Instruções",
+                height=100,
+                placeholder="Adicione instruções especiais, cuidados, equipamentos necessários..."
+            )
             
-            submitted = st.form_submit_button("➕ Adicionar Plano", type="primary")
+            submitted = st.form_submit_button("💾 Adicionar Plano", type="primary", use_container_width=True)
             
             if submitted:
                 if metric and responsible:
@@ -328,47 +446,182 @@ with tab1:
                         'responsible': responsible,
                         'start_date': start_date.isoformat(),
                         'end_date': end_date.isoformat() if end_date else None,
-                        'notes': notes
+                        'sample_size': sample_size,
+                        'notes': notes,
+                        'created_at': datetime.now().isoformat()
                     }
                     
+                    # Inicializar lista se não existir
                     if 'collection_plans' not in st.session_state:
                         st.session_state.collection_plans = []
+                    
                     st.session_state.collection_plans.append(plan)
                     
+                    # Salvar no banco
                     if supabase:
                         if save_collection_plan(st.session_state.project_name, plan):
-                            st.success("✅ Plano adicionado com sucesso!")
+                            st.success("✅ Plano adicionado e salvo no banco de dados!")
+                            st.balloons()
                         else:
-                            st.warning("⚠️ Plano salvo localmente")
+                            st.warning("⚠️ Plano salvo localmente (erro ao salvar no banco)")
                     else:
                         st.success("✅ Plano adicionado localmente!")
                     
+                    time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("Preencha os campos obrigatórios")
+                    st.error("❌ Preencha todos os campos obrigatórios (*)")
     
     with col2:
         st.info("""
-        **📚 Guia de Coleta:**
+        **📚 Guia de Coleta de Dados**
         
-        **Métodos:**
-        - **Manual:** Registro manual
-        - **Automático:** Sensores/sistemas
-        - **Inspeção:** Verificação visual
+        **Métodos de Coleta:**
+        - **Manual:** Registro em papel/planilha
+        - **Automático:** Sistema integrado
+        - **Sistema:** Software específico
+        - **Inspeção:** Verificação visual/medição
+        - **Amostragem:** Coleta de amostras
+        - **Sensor:** Dispositivos automáticos
         
-        **Frequências:**
-        - Escolha baseada na variação
-        - Considere custo vs benefício
-        - Garanta representatividade
+        **Frequências Recomendadas:**
+        - **Processo estável:** Semanal/Mensal
+        - **Processo variável:** Diária/Horária
+        - **Alta criticidade:** Contínua
+        
+        **💡 Dicas:**
+        - Defina tamanho de amostra adequado
+        - Documente o procedimento
+        - Treine os coletadores
+        - Valide o sistema de medição
         """)
+        
+        st.divider()
+        
+        # Estatísticas rápidas
+        if 'collection_plans' in st.session_state and st.session_state.collection_plans:
+            st.metric("📊 Planos Cadastrados", len(st.session_state.collection_plans))
+            
+            # Contar métodos
+            methods = [p['collection_method'] for p in st.session_state.collection_plans]
+            most_common = max(set(methods), key=methods.count) if methods else "N/A"
+            st.caption(f"**Método mais usado:** {most_common}")
     
+    # ============= PLANOS CADASTRADOS =============
     if 'collection_plans' in st.session_state and st.session_state.collection_plans:
         st.divider()
         st.subheader("📋 Planos de Coleta Cadastrados")
         
+        # Métricas resumo
+        col_metric1, col_metric2, col_metric3, col_metric4 = st.columns(4)
+        
+        with col_metric1:
+            st.metric("Total de Planos", len(st.session_state.collection_plans))
+        
+        with col_metric2:
+            unique_metrics = len(set([p['metric_name'] for p in st.session_state.collection_plans]))
+            st.metric("Métricas Únicas", unique_metrics)
+        
+        with col_metric3:
+            unique_responsible = len(set([p['responsible'] for p in st.session_state.collection_plans]))
+            st.metric("Responsáveis", unique_responsible)
+        
+        with col_metric4:
+            # Calcular total de amostras esperadas
+            total_samples = sum([p.get('sample_size', 0) for p in st.session_state.collection_plans])
+            st.metric("Amostras Totais", total_samples)
+        
+        st.divider()
+        
+        # Tabela de planos
         plans_df = pd.DataFrame(st.session_state.collection_plans)
-        st.dataframe(plans_df[['metric_name', 'collection_method', 'frequency', 'responsible']], 
-                    use_container_width=True, hide_index=True)
+        
+        # Selecionar colunas para exibição
+        display_columns = ['metric_name', 'collection_method', 'frequency', 'responsible', 'start_date', 'sample_size']
+        available_columns = [col for col in display_columns if col in plans_df.columns]
+        
+        # Renomear colunas para português
+        column_names = {
+            'metric_name': 'Métrica',
+            'collection_method': 'Método',
+            'frequency': 'Frequência',
+            'responsible': 'Responsável',
+            'start_date': 'Data Início',
+            'sample_size': 'Amostra'
+        }
+        
+        display_df = plans_df[available_columns].copy()
+        display_df = display_df.rename(columns=column_names)
+        
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+        # Detalhes expandíveis
+        st.subheader("🔍 Detalhes dos Planos")
+        
+        for idx, plan in enumerate(st.session_state.collection_plans):
+            with st.expander(f"📌 {plan['metric_name']} - {plan['responsible']}"):
+                col_detail1, col_detail2 = st.columns(2)
+                
+                with col_detail1:
+                    st.write(f"**Método:** {plan['collection_method']}")
+                    st.write(f"**Frequência:** {plan['frequency']}")
+                    st.write(f"**Responsável:** {plan['responsible']}")
+                    st.write(f"**Tamanho da Amostra:** {plan.get('sample_size', 'N/A')}")
+                
+                with col_detail2:
+                    st.write(f"**Data Início:** {plan['start_date']}")
+                    if plan.get('end_date'):
+                        st.write(f"**Data Fim:** {plan['end_date']}")
+                    else:
+                        st.write(f"**Data Fim:** Não definida")
+                    
+                    if plan.get('created_at'):
+                        created = datetime.fromisoformat(plan['created_at']).strftime('%d/%m/%Y %H:%M')
+                        st.caption(f"Criado em: {created}")
+                
+                if plan.get('notes'):
+                    st.markdown("**📝 Observações:**")
+                    st.info(plan['notes'])
+                
+                # Botão para remover
+                if st.button(f"🗑️ Remover Plano", key=f"remove_plan_{idx}"):
+                    st.session_state.collection_plans.pop(idx)
+                    st.success("Plano removido!")
+                    st.rerun()
+        
+        # Exportar planos
+        st.divider()
+        
+        col_export1, col_export2 = st.columns(2)
+        
+        with col_export1:
+            # Download CSV
+            csv = plans_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Planos (CSV)",
+                data=csv,
+                file_name=f"planos_coleta_{st.session_state.project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with col_export2:
+            # Limpar todos os planos
+            if st.button("🗑️ Limpar Todos os Planos", type="secondary", use_container_width=True):
+                if st.session_state.get('confirm_clear_plans', False):
+                    st.session_state.collection_plans = []
+                    st.session_state.confirm_clear_plans = False
+                    st.success("Todos os planos foram removidos!")
+                    st.rerun()
+                else:
+                    st.session_state.confirm_clear_plans = True
+                    st.warning("⚠️ Clique novamente para confirmar")
+    
+    else:
+        st.info("📭 Nenhum plano de coleta cadastrado ainda. Use o formulário acima para adicionar o primeiro plano.")
+
+
+############################################################################################################################################################################################################################################
 
 # ========================= TAB 2: MSA =========================
 
