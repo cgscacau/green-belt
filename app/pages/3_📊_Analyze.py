@@ -498,381 +498,329 @@ with tabs[1]:
         st.warning("⚠️ Nenhum dado disponível para análise de Pareto")
 
 
-# ========================= TAB 3: ISHIKAWA MELHORADO =========================
+# ========================= TAB 3: ISHIKAWA CORRIGIDO (SEM RESET) =========================
 with tabs[2]:
     st.header("🎯 Diagrama de Ishikawa (Espinha de Peixe)")
     
-    # Campo do problema
-    problem = st.text_input(
-        "Defina o problema central:", 
-        value=st.session_state.get('problem_statement', ''),
-        help="Este será o efeito principal no diagrama"
-    )
-    
-    # Inicializar categorias no session_state se não existir
-    if 'ishikawa_categories' not in st.session_state:
-        st.session_state.ishikawa_categories = {
-            "Método": [],
-            "Máquina": [],
-            "Mão de obra": [],
-            "Material": [],
-            "Medida": [],
-            "Meio ambiente": []
+    # Inicializar o estado persistente para Ishikawa
+    if 'ishikawa_data' not in st.session_state:
+        st.session_state.ishikawa_data = {
+            'problem': '',
+            'categories': {
+                "Método": {'num_causes': 3, 'causes': {}},
+                "Máquina": {'num_causes': 3, 'causes': {}},
+                "Mão de obra": {'num_causes': 3, 'causes': {}},
+                "Material": {'num_causes': 3, 'causes': {}},
+                "Medida": {'num_causes': 3, 'causes': {}},
+                "Meio ambiente": {'num_causes': 3, 'causes': {}}
+            }
         }
     
-    # Opção de customizar categorias
-    with st.expander("⚙️ Configurar Categorias (6M's)"):
-        custom_categories = st.checkbox("Usar categorias personalizadas")
+    # Campo do problema - salvar no session_state
+    problem = st.text_input(
+        "Defina o problema central:", 
+        value=st.session_state.ishikawa_data.get('problem', ''),
+        key="ishikawa_problem_input"
+    )
+    st.session_state.ishikawa_data['problem'] = problem
+    
+    # Container principal para evitar recarregamento
+    main_container = st.container()
+    
+    with main_container:
+        # Usar columns ao invés de tabs para evitar reset
+        st.subheader("📝 Adicionar Causas por Categoria")
         
-        if custom_categories:
-            st.info("Digite as categorias separadas por vírgula")
-            custom_cats = st.text_input(
-                "Categorias:",
-                value="Método, Máquina, Mão de obra, Material, Medida, Meio ambiente"
-            )
-            categories_list = [cat.strip() for cat in custom_cats.split(',')]
-        else:
-            categories_list = ["Método", "Máquina", "Mão de obra", "Material", "Medida", "Meio ambiente"]
-    
-    # Interface para adicionar causas
-    st.subheader("📝 Adicionar Causas por Categoria")
-    
-    # Tabs para cada categoria
-    category_tabs = st.tabs(categories_list)
-    
-    categories = {}
-    
-    for i, (tab, category) in enumerate(zip(category_tabs, categories_list)):
-        with tab:
-            st.markdown(f"### {category}")
-            
-            # Número dinâmico de causas
-            if f'num_causes_{category}' not in st.session_state:
-                st.session_state[f'num_causes_{category}'] = 3
-            
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                num_causes = st.number_input(
-                    f"Número de causas para {category}:",
-                    min_value=1,
-                    max_value=10,
-                    value=st.session_state[f'num_causes_{category}'],
-                    key=f"num_{category}_{i}"
-                )
-                st.session_state[f'num_causes_{category}'] = num_causes
-            
-            with col2:
-                if st.button(f"➕ Adicionar", key=f"add_{category}"):
-                    st.session_state[f'num_causes_{category}'] += 1
-                    st.rerun()
-            
-            # Campos para as causas
-            causes = []
-            for j in range(num_causes):
-                cause = st.text_input(
-                    f"Causa {j+1}:",
-                    key=f"ish_{category}_{j}",
-                    placeholder=f"Descreva a causa {j+1} relacionada a {category}"
-                )
-                if cause:
-                    causes.append(cause)
-            
-            categories[category] = causes
-            
-            # Resumo da categoria
-            if causes:
-                st.success(f"✅ {len(causes)} causa(s) adicionada(s)")
-            else:
-                st.info("💡 Adicione causas que contribuem para o problema")
-    
-    # Alternativa: Entrada rápida em formato de lista
-    with st.expander("⚡ Entrada Rápida (Colar Lista)"):
-        st.info("Cole uma lista de causas (uma por linha) e selecione a categoria")
-        
-        quick_category = st.selectbox("Categoria:", categories_list)
-        quick_causes = st.text_area(
-            "Causas (uma por linha):",
-            height=150,
-            placeholder="Causa 1\nCausa 2\nCausa 3..."
+        # Opção de visualização
+        view_mode = st.radio(
+            "Modo de visualização:",
+            ["Todas as Categorias", "Uma por Vez"],
+            horizontal=True,
+            key="ishikawa_view_mode"
         )
         
-        if st.button("Adicionar Lista"):
-            if quick_causes:
-                causes_list = [c.strip() for c in quick_causes.split('\n') if c.strip()]
-                if quick_category not in categories:
-                    categories[quick_category] = []
-                categories[quick_category].extend(causes_list)
-                st.success(f"✅ {len(causes_list)} causas adicionadas a {quick_category}")
-                st.rerun()
+        if view_mode == "Uma por Vez":
+            # Seletor de categoria
+            selected_category = st.selectbox(
+                "Selecione a categoria:",
+                list(st.session_state.ishikawa_data['categories'].keys()),
+                key="ishikawa_selected_cat"
+            )
+            
+            categories_to_show = [selected_category]
+        else:
+            categories_to_show = list(st.session_state.ishikawa_data['categories'].keys())
+        
+        # Processar cada categoria
+        for category in categories_to_show:
+            with st.expander(f"📌 {category}", expanded=(view_mode == "Uma por Vez")):
+                
+                # Container para a categoria
+                cat_container = st.container()
+                
+                with cat_container:
+                    # Controle do número de causas
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    
+                    with col1:
+                        # Usar o valor do session_state
+                        current_num = st.session_state.ishikawa_data['categories'][category]['num_causes']
+                        st.write(f"**Número de campos: {current_num}**")
+                    
+                    with col2:
+                        if st.button("➕", key=f"add_btn_{category}", help="Adicionar campo"):
+                            st.session_state.ishikawa_data['categories'][category]['num_causes'] = min(10, current_num + 1)
+                            st.rerun()
+                    
+                    with col3:
+                        if st.button("➖", key=f"rem_btn_{category}", help="Remover campo"):
+                            st.session_state.ishikawa_data['categories'][category]['num_causes'] = max(1, current_num - 1)
+                            st.rerun()
+                    
+                    # Campos de entrada para as causas
+                    causes_list = []
+                    num_causes = st.session_state.ishikawa_data['categories'][category]['num_causes']
+                    
+                    for i in range(num_causes):
+                        # Recuperar valor salvo se existir
+                        saved_value = st.session_state.ishikawa_data['categories'][category]['causes'].get(i, '')
+                        
+                        cause = st.text_input(
+                            f"Causa {i+1}:",
+                            value=saved_value,
+                            key=f"ishikawa_cause_{category}_{i}",
+                            placeholder=f"Descreva a causa {i+1}"
+                        )
+                        
+                        # Salvar no session_state
+                        st.session_state.ishikawa_data['categories'][category]['causes'][i] = cause
+                        
+                        if cause:
+                            causes_list.append(cause)
+                    
+                    # Resumo
+                    if causes_list:
+                        st.success(f"✅ {len(causes_list)} causa(s) preenchida(s)")
+                    else:
+                        st.info("💡 Preencha as causas acima")
+        
+        # Entrada rápida (em expander separado)
+        with st.expander("⚡ Entrada Rápida - Colar Lista"):
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                quick_category = st.selectbox(
+                    "Categoria:",
+                    list(st.session_state.ishikawa_data['categories'].keys()),
+                    key="quick_cat_select"
+                )
+            
+            with col2:
+                quick_input = st.text_area(
+                    "Cole as causas (uma por linha):",
+                    height=100,
+                    key="quick_causes_input"
+                )
+            
+            if st.button("➕ Adicionar Lista", key="add_quick_list"):
+                if quick_input:
+                    lines = [line.strip() for line in quick_input.split('\n') if line.strip()]
+                    
+                    # Adicionar as causas
+                    cat_data = st.session_state.ishikawa_data['categories'][quick_category]
+                    
+                    # Ajustar número de campos se necessário
+                    current_causes = len([v for v in cat_data['causes'].values() if v])
+                    new_total = current_causes + len(lines)
+                    cat_data['num_causes'] = min(10, new_total)
+                    
+                    # Adicionar as novas causas
+                    start_index = current_causes
+                    for i, line in enumerate(lines[:10-current_causes]):
+                        cat_data['causes'][start_index + i] = line
+                    
+                    st.success(f"✅ {len(lines)} causas adicionadas a {quick_category}")
+                    st.rerun()
     
-    # Botões de ação
-    col1, col2, col3 = st.columns([2, 1, 1])
+    # Separador visual
+    st.divider()
+    
+    # Botões de ação (fora do container principal)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        generate_button = st.button("🎨 Gerar Diagrama", type="primary", use_container_width=True)
+        if st.button("🎨 Gerar Diagrama", type="primary", key="gen_ishikawa_btn"):
+            st.session_state.show_ishikawa_diagram = True
     
     with col2:
-        save_button = st.button("💾 Salvar Análise", use_container_width=True)
+        if st.button("💾 Salvar Análise", key="save_ishikawa_btn"):
+            st.session_state.save_ishikawa = True
     
     with col3:
-        clear_button = st.button("🗑️ Limpar Tudo", use_container_width=True)
+        if st.button("📥 Exportar", key="export_ishikawa_btn"):
+            st.session_state.export_ishikawa = True
     
-    if clear_button:
-        for category in categories_list:
-            st.session_state[f'num_causes_{category}'] = 3
-        st.rerun()
+    with col4:
+        if st.button("🗑️ Limpar Tudo", key="clear_ishikawa_btn"):
+            # Limpar dados
+            for cat in st.session_state.ishikawa_data['categories'].values():
+                cat['num_causes'] = 3
+                cat['causes'] = {}
+            st.session_state.ishikawa_data['problem'] = ''
+            st.rerun()
     
-    # Gerar diagrama
-    if generate_button or save_button:
+    # Gerar diagrama se solicitado
+    if st.session_state.get('show_ishikawa_diagram', False):
+        # Coletar todas as causas preenchidas
+        categories_filled = {}
+        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
+            causes = [v for v in cat_data['causes'].values() if v]
+            if causes:
+                categories_filled[cat_name] = causes
+        
         if not problem:
             st.warning("⚠️ Por favor, defina o problema primeiro")
-        elif not any(categories.values()):
+        elif not categories_filled:
             st.warning("⚠️ Adicione pelo menos uma causa")
         else:
-            # Criar diagrama melhorado
+            # Criar o diagrama
             fig = go.Figure()
             
-            # Configurações do layout
+            # Configuração do layout
             fig.update_layout(
-                title={
-                    'text': "Diagrama de Ishikawa - Análise de Causa e Efeito",
-                    'x': 0.5,
-                    'xanchor': 'center'
-                },
+                title="Diagrama de Ishikawa - Análise de Causa e Efeito",
                 showlegend=False,
-                xaxis=dict(
-                    showgrid=False,
-                    zeroline=False,
-                    visible=False,
-                    range=[0, 12]
-                ),
-                yaxis=dict(
-                    showgrid=False,
-                    zeroline=False,
-                    visible=False,
-                    range=[0, 10]
-                ),
-                height=700,
-                plot_bgcolor='white',
-                paper_bgcolor='white'
+                xaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 12]),
+                yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 10]),
+                height=600,
+                plot_bgcolor='white'
             )
             
-            # Espinha principal (mais grossa e destacada)
+            # Espinha principal
             fig.add_trace(go.Scatter(
-                x=[1, 10],
-                y=[5, 5],
+                x=[1, 10], y=[5, 5],
                 mode='lines',
-                line=dict(color='black', width=4),
-                hoverinfo='skip'
+                line=dict(color='black', width=3)
             ))
             
-            # Seta no final da espinha
-            fig.add_annotation(
-                x=10, y=5,
-                ax=9.5, ay=5,
-                xref="x", yref="y",
-                axref="x", ayref="y",
-                showarrow=True,
-                arrowhead=2,
-                arrowsize=1,
-                arrowwidth=3,
-                arrowcolor="black"
-            )
+            # Posições das categorias
+            positions = [
+                (2.5, 7.5), (5, 7.5), (7.5, 7.5),
+                (2.5, 2.5), (5, 2.5), (7.5, 2.5)
+            ]
             
-            # Posições para as categorias (distribuídas uniformemente)
-            num_categories = len(categories)
-            if num_categories <= 6:
-                # Layout padrão para até 6 categorias
-                positions = [
-                    (2.5, 7.5),   # Superior esquerda
-                    (5, 7.5),     # Superior centro
-                    (7.5, 7.5),   # Superior direita
-                    (2.5, 2.5),   # Inferior esquerda
-                    (5, 2.5),     # Inferior centro
-                    (7.5, 2.5)    # Inferior direita
-                ]
-            else:
-                # Layout dinâmico para mais categorias
-                positions = []
-                x_positions = np.linspace(2, 8, min(4, (num_categories + 1) // 2))
-                for i, x in enumerate(x_positions):
-                    positions.append((x, 7.5))  # Linha superior
-                for i, x in enumerate(x_positions):
-                    if len(positions) < num_categories:
-                        positions.append((x, 2.5))  # Linha inferior
-            
-            # Adicionar categorias e causas
             colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#48C9B0']
             
-            for i, (category, causes) in enumerate(categories.items()):
-                if i < len(positions) and causes:  # Só desenhar se houver causas
+            # Adicionar categorias e causas
+            for i, (category, causes) in enumerate(categories_filled.items()):
+                if i < len(positions):
                     x_pos, y_pos = positions[i]
                     color = colors[i % len(colors)]
                     
-                    # Linha da categoria (espinha secundária)
+                    # Linha da categoria
                     fig.add_trace(go.Scatter(
-                        x=[x_pos, x_pos],
-                        y=[5, y_pos],
+                        x=[x_pos, x_pos], y=[5, y_pos],
                         mode='lines',
-                        line=dict(color=color, width=3),
-                        hoverinfo='skip'
+                        line=dict(color=color, width=2)
                     ))
                     
-                    # Nome da categoria (em destaque)
+                    # Nome da categoria
                     fig.add_annotation(
-                        x=x_pos,
-                        y=y_pos + (0.3 if y_pos > 5 else -0.3),
+                        x=x_pos, y=y_pos + (0.3 if y_pos > 5 else -0.3),
                         text=f"<b>{category}</b>",
                         showarrow=False,
-                        font=dict(size=12, color=color),
-                        bgcolor='white',
-                        bordercolor=color,
-                        borderwidth=2,
-                        borderpad=4
+                        font=dict(size=11, color=color),
+                        bgcolor='rgba(255,255,255,0.8)'
                     )
                     
-                    # Adicionar causas com linhas menores
-                    for j, cause in enumerate(causes[:8]):  # Limitar a 8 causas por visualização
-                        # Calcular posição da causa
-                        if y_pos > 5:  # Categoria superior
-                            cause_x = x_pos + (0.3 if j % 2 == 0 else -0.3)
-                            cause_y = y_pos - 0.5 - (j // 2) * 0.4
-                        else:  # Categoria inferior
-                            cause_x = x_pos + (0.3 if j % 2 == 0 else -0.3)
-                            cause_y = y_pos + 0.5 + (j // 2) * 0.4
+                    # Adicionar causas
+                    for j, cause in enumerate(causes[:6]):  # Limitar visualização
+                        offset = 0.4 * (j + 1)
+                        cause_y = y_pos + (offset if y_pos > 5 else -offset)
                         
-                        # Linha pequena para a causa
-                        fig.add_trace(go.Scatter(
-                            x=[x_pos, cause_x],
-                            y=[cause_y, cause_y],
-                            mode='lines',
-                            line=dict(color=color, width=1, dash='dot'),
-                            hoverinfo='skip'
-                        ))
-                        
-                        # Texto da causa
                         fig.add_annotation(
-                            x=cause_x,
-                            y=cause_y,
+                            x=x_pos + 0.2, y=cause_y,
                             text=cause[:30] + '...' if len(cause) > 30 else cause,
                             showarrow=False,
                             font=dict(size=9),
-                            align='left' if cause_x > x_pos else 'right'
-                        )
-                    
-                    # Se houver mais de 8 causas, indicar
-                    if len(causes) > 8:
-                        fig.add_annotation(
-                            x=x_pos,
-                            y=y_pos - 2 if y_pos > 5 else y_pos + 2,
-                            text=f"... +{len(causes) - 8} mais",
-                            showarrow=False,
-                            font=dict(size=8, color='gray'),
-                            align='center'
+                            align='left'
                         )
             
-            # Adicionar o problema/efeito (em destaque)
+            # Problema/Efeito
             fig.add_annotation(
-                x=10.5,
-                y=5,
-                text=f"<b>PROBLEMA/EFEITO</b><br>{problem[:50]}{'...' if len(problem) > 50 else ''}",
+                x=10.5, y=5,
+                text=f"<b>PROBLEMA</b><br>{problem[:50]}",
                 showarrow=False,
-                font=dict(size=14, color='white'),
+                font=dict(size=12, color='white'),
                 bgcolor='red',
-                bordercolor='darkred',
-                borderwidth=2,
-                borderpad=10,
-                align='center'
+                borderpad=8
             )
             
-            # Exibir diagrama
             st.plotly_chart(fig, use_container_width=True)
             
-            # Resumo estatístico
-            st.subheader("📊 Resumo da Análise")
+            # Estatísticas
+            total_causes = sum(len(causes) for causes in categories_filled.values())
             
-            col1, col2, col3, col4 = st.columns(4)
-            
-            total_causes = sum(len(c) for c in categories.values())
-            
+            col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total de Causas", total_causes)
-            
             with col2:
-                st.metric("Categorias Utilizadas", len([c for c in categories.values() if c]))
-            
+                st.metric("Categorias Utilizadas", len(categories_filled))
             with col3:
-                max_category = max(categories.items(), key=lambda x: len(x[1])) if categories else ('', [])
-                st.metric("Categoria com Mais Causas", max_category[0] if max_category[1] else "N/A")
+                max_cat = max(categories_filled.items(), key=lambda x: len(x[1]))
+                st.metric("Categoria Principal", max_cat[0])
+        
+        # Reset flag
+        st.session_state.show_ishikawa_diagram = False
+    
+    # Salvar análise se solicitado
+    if st.session_state.get('save_ishikawa', False):
+        categories_filled = {}
+        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
+            causes = [v for v in cat_data['causes'].values() if v]
+            if causes:
+                categories_filled[cat_name] = causes
+        
+        if categories_filled and problem:
+            analysis_data = {
+                'problem': problem,
+                'categories': categories_filled,
+                'total_causes': sum(len(c) for c in categories_filled.values()),
+                'timestamp': datetime.now().isoformat()
+            }
             
-            with col4:
-                avg_causes = total_causes / len([c for c in categories.values() if c]) if any(categories.values()) else 0
-                st.metric("Média de Causas/Categoria", f"{avg_causes:.1f}")
-            
-            # Tabela detalhada
-            st.subheader("📋 Detalhamento das Causas")
-            
-            # Criar DataFrame para exibição
-            detail_data = []
-            for category, causes in categories.items():
-                for i, cause in enumerate(causes, 1):
-                    detail_data.append({
-                        'Categoria': category,
-                        'Nº': i,
-                        'Causa': cause,
-                        'Prioridade': st.selectbox(
-                            "Prioridade",
-                            ["Alta", "Média", "Baixa"],
-                            key=f"priority_{category}_{i}",
-                            label_visibility="collapsed"
-                        )
+            if save_analysis_to_db(project_name, "ishikawa", analysis_data):
+                st.success("✅ Análise Ishikawa salva com sucesso!")
+        
+        st.session_state.save_ishikawa = False
+    
+    # Exportar se solicitado
+    if st.session_state.get('export_ishikawa', False):
+        # Criar DataFrame para export
+        export_data = []
+        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
+            for i, cause in cat_data['causes'].items():
+                if cause:
+                    export_data.append({
+                        'Categoria': cat_name,
+                        'Número': i + 1,
+                        'Causa': cause
                     })
+        
+        if export_data:
+            df_export = pd.DataFrame(export_data)
+            csv = df_export.to_csv(index=False)
             
-            if detail_data:
-                df_causes = pd.DataFrame(detail_data)
-                st.dataframe(df_causes, use_container_width=True, hide_index=True)
-                
-                # Download
-                csv = df_causes.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Causas (CSV)",
-                    data=csv,
-                    file_name=f"ishikawa_{problem[:20]}_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-            
-            # Salvar análise
-            if save_button:
-                analysis_data = {
-                    'problem': problem,
-                    'categories': {k: v for k, v in categories.items() if v},
-                    'total_causes': total_causes,
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                if save_analysis_to_db(project_name, "ishikawa", analysis_data, "cause_effect"):
-                    st.success("✅ Análise Ishikawa salva com sucesso!")
-                    
-                    # Salvar também na tabela de análises estatísticas
-                    stat_analysis = {
-                        'project_name': project_name,
-                        'analysis_type': 'ishikawa',
-                        'analysis_subtype': 'cause_effect',
-                        'parameters': {
-                            'problem': problem,
-                            'num_categories': len([c for c in categories.values() if c]),
-                            'total_causes': total_causes
-                        },
-                        'results': categories,
-                        'created_at': datetime.now().isoformat()
-                    }
-                    
-                    if supabase:
-                        try:
-                            supabase.table('statistical_analyses').insert(stat_analysis).execute()
-                        except:
-                            pass
+            st.download_button(
+                label="📥 Download CSV",
+                data=csv,
+                file_name=f"ishikawa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="download_ishikawa_csv"
+            )
+        
+        st.session_state.export_ishikawa = False
+
 
 
 # ========================= TAB 4: REGRESSÃO =========================
