@@ -3157,7 +3157,7 @@ GRUPOS:
 
 ################################################################################################################################################################################################################################
 
-# ========================= TAB 11: 5 PORQUÊS (SEM RESET) =========================
+# ========================= TAB 11: 5 PORQUÊS + 5W2H (COMPLETO) =========================
 with tabs[10]:
     st.header("❓ Análise dos 5 Porquês")
     
@@ -3168,15 +3168,15 @@ with tabs[10]:
         st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
         st.stop()
     
-    # Inicializar session_state para os campos
+    # Inicializar session_state
     if 'five_whys_problem' not in st.session_state:
         st.session_state.five_whys_problem = ''
     if 'five_whys_list' not in st.session_state:
         st.session_state.five_whys_list = ['', '', '', '', '']
     if 'five_whys_root' not in st.session_state:
         st.session_state.five_whys_root = ''
-    if 'five_whys_action' not in st.session_state:
-        st.session_state.five_whys_action = ''
+    if 'action_plan_5w2h' not in st.session_state:
+        st.session_state.action_plan_5w2h = []
     
     # Botões superiores
     col_load, col_history, col_new = st.columns([1, 1, 1])
@@ -3197,7 +3197,7 @@ with tabs[10]:
                             st.session_state.five_whys_problem = loaded_data.get('problem', '')
                             st.session_state.five_whys_list = loaded_data.get('whys', ['', '', '', '', ''])
                             st.session_state.five_whys_root = loaded_data.get('root_cause', '')
-                            st.session_state.five_whys_action = loaded_data.get('action_plan', '')
+                            st.session_state.action_plan_5w2h = loaded_data.get('action_plan_5w2h', [])
                             st.success("✅ Análise carregada com sucesso!")
                             st.rerun()
                         else:
@@ -3215,7 +3215,7 @@ with tabs[10]:
             st.session_state.five_whys_problem = ''
             st.session_state.five_whys_list = ['', '', '', '', '']
             st.session_state.five_whys_root = ''
-            st.session_state.five_whys_action = ''
+            st.session_state.action_plan_5w2h = []
             st.rerun()
     
     st.divider()
@@ -3248,13 +3248,19 @@ with tabs[10]:
                                         st.write(f"{i+1}. {why}")
                                 
                                 st.markdown(f"**Causa Raiz:** {data.get('root_cause', 'N/A')}")
-                                st.markdown(f"**Plano de Ação:** {data.get('action_plan', 'N/A')}")
+                                
+                                # Mostrar plano de ação 5W2H
+                                action_plan = data.get('action_plan_5w2h', [])
+                                if action_plan:
+                                    st.markdown("**Plano de Ação (5W2H):**")
+                                    for i, action in enumerate(action_plan):
+                                        st.write(f"**Ação {i+1}:** {action.get('what', 'N/A')}")
                                 
                                 if st.button(f"📥 Carregar esta análise", key=f"load_specific_{idx}"):
                                     st.session_state.five_whys_problem = data.get('problem', '')
                                     st.session_state.five_whys_list = data.get('whys', ['', '', '', '', ''])
                                     st.session_state.five_whys_root = data.get('root_cause', '')
-                                    st.session_state.five_whys_action = data.get('action_plan', '')
+                                    st.session_state.action_plan_5w2h = data.get('action_plan_5w2h', [])
                                     st.success("✅ Análise carregada!")
                                     st.rerun()
                             else:
@@ -3266,8 +3272,8 @@ with tabs[10]:
         
         st.divider()
     
-    # Formulário principal - SEM atualizar session_state diretamente
-    st.subheader("🔍 Nova Análise dos 5 Porquês")
+    # ==================== PARTE 1: 5 PORQUÊS ====================
+    st.subheader("🔍 Análise dos 5 Porquês")
     
     # Problema
     problem = st.text_area(
@@ -3311,14 +3317,127 @@ with tabs[10]:
         key="root_cause_field"
     )
     
-    # Plano de Ação
-    action_plan = st.text_area(
-        "**📋 Plano de Ação:**",
-        value=st.session_state.five_whys_action,
-        height=100,
-        placeholder="Descreva as ações que serão tomadas para eliminar a causa raiz...",
-        key="action_plan_field"
-    )
+    # ==================== PARTE 2: PLANO DE AÇÃO 5W2H ====================
+    st.markdown("---")
+    st.header("📋 Plano de Ação - 5W2H")
+    st.caption("**5W2H:** What (O quê), Why (Por quê), Where (Onde), When (Quando), Who (Quem), How (Como), How Much (Quanto Custa)")
+    
+    # Botões para gerenciar ações
+    col_add, col_info = st.columns([1, 3])
+    
+    with col_add:
+        if st.button("➕ Adicionar Ação", key="add_action_btn", use_container_width=True):
+            st.session_state.action_plan_5w2h.append({
+                'what': '',
+                'why': '',
+                'where': '',
+                'when': '',
+                'who': '',
+                'how': '',
+                'how_much': ''
+            })
+            st.rerun()
+    
+    with col_info:
+        st.info(f"📊 Total de ações no plano: **{len(st.session_state.action_plan_5w2h)}**")
+    
+    # Formulário de ações 5W2H
+    if len(st.session_state.action_plan_5w2h) == 0:
+        st.warning("⚠️ Nenhuma ação adicionada ainda. Clique em '➕ Adicionar Ação' para começar.")
+    else:
+        for idx, action in enumerate(st.session_state.action_plan_5w2h):
+            with st.expander(f"🎯 Ação {idx + 1}: {action.get('what', 'Nova Ação')[:50]}", expanded=True):
+                
+                col1, col2 = st.columns([5, 1])
+                
+                with col2:
+                    if st.button("🗑️", key=f"delete_action_{idx}", help="Remover esta ação"):
+                        st.session_state.action_plan_5w2h.pop(idx)
+                        st.rerun()
+                
+                # What (O quê?)
+                what = st.text_area(
+                    "**1. What (O quê?)** - Qual ação será executada?",
+                    value=action.get('what', ''),
+                    key=f"what_{idx}",
+                    height=80,
+                    placeholder="Descreva a ação específica que será realizada..."
+                )
+                st.session_state.action_plan_5w2h[idx]['what'] = what
+                
+                # Why (Por quê?)
+                why_action = st.text_area(
+                    "**2. Why (Por quê?)** - Por que esta ação é necessária?",
+                    value=action.get('why', ''),
+                    key=f"why_action_{idx}",
+                    height=60,
+                    placeholder="Justifique a necessidade desta ação..."
+                )
+                st.session_state.action_plan_5w2h[idx]['why'] = why_action
+                
+                # Where (Onde?)
+                where = st.text_input(
+                    "**3. Where (Onde?)** - Onde será executada?",
+                    value=action.get('where', ''),
+                    key=f"where_{idx}",
+                    placeholder="Local, setor, departamento..."
+                )
+                st.session_state.action_plan_5w2h[idx]['where'] = where
+                
+                # When (Quando?)
+                col_when1, col_when2 = st.columns(2)
+                with col_when1:
+                    when = st.text_input(
+                        "**4. When (Quando?)** - Prazo/Data",
+                        value=action.get('when', ''),
+                        key=f"when_{idx}",
+                        placeholder="Ex: 15/12/2024 ou 2 semanas"
+                    )
+                    st.session_state.action_plan_5w2h[idx]['when'] = when
+                
+                with col_when2:
+                    # Opção de usar date_input
+                    use_date_picker = st.checkbox("Usar seletor de data", key=f"use_date_{idx}")
+                    if use_date_picker:
+                        date_selected = st.date_input("Data", key=f"date_{idx}")
+                        st.session_state.action_plan_5w2h[idx]['when'] = date_selected.strftime('%d/%m/%Y')
+                
+                # Who (Quem?)
+                who = st.text_input(
+                    "**5. Who (Quem?)** - Responsável pela execução",
+                    value=action.get('who', ''),
+                    key=f"who_{idx}",
+                    placeholder="Nome do responsável ou equipe..."
+                )
+                st.session_state.action_plan_5w2h[idx]['who'] = who
+                
+                # How (Como?)
+                how = st.text_area(
+                    "**6. How (Como?)** - Como será executada?",
+                    value=action.get('how', ''),
+                    key=f"how_{idx}",
+                    height=80,
+                    placeholder="Descreva o método, processo ou procedimento..."
+                )
+                st.session_state.action_plan_5w2h[idx]['how'] = how
+                
+                # How Much (Quanto custa?)
+                how_much = st.text_input(
+                    "**7. How Much (Quanto custa?)** - Custo estimado",
+                    value=action.get('how_much', ''),
+                    key=f"how_much_{idx}",
+                    placeholder="Ex: R$ 5.000,00 ou Sem custo"
+                )
+                st.session_state.action_plan_5w2h[idx]['how_much'] = how_much
+                
+                # Indicador de completude
+                filled_fields = sum([
+                    bool(what), bool(why_action), bool(where), 
+                    bool(when), bool(who), bool(how), bool(how_much)
+                ])
+                
+                progress = filled_fields / 7
+                st.progress(progress, text=f"Completude: {filled_fields}/7 campos preenchidos")
     
     st.divider()
     
@@ -3326,61 +3445,89 @@ with tabs[10]:
     col_save, col_export, col_clear = st.columns([1, 1, 1])
     
     with col_save:
-        if st.button("💾 Salvar Análise", use_container_width=True, type="primary", key="save_5why_final"):
+        if st.button("💾 Salvar Análise Completa", use_container_width=True, type="primary", key="save_5why_final"):
             if not problem:
                 st.warning("⚠️ Por favor, defina o problema antes de salvar.")
             elif not any(whys):
                 st.warning("⚠️ Preencha pelo menos um 'Por quê' antes de salvar.")
             else:
-                # Atualizar session_state SOMENTE ao salvar
+                # Atualizar session_state
                 st.session_state.five_whys_problem = problem
                 st.session_state.five_whys_list = whys
                 st.session_state.five_whys_root = root_cause
-                st.session_state.five_whys_action = action_plan
                 
                 analysis = {
                     "problem": problem,
                     "whys": whys,
                     "root_cause": root_cause,
-                    "action_plan": action_plan,
+                    "action_plan_5w2h": st.session_state.action_plan_5w2h,
                     "timestamp": datetime.now().isoformat()
                 }
                 
                 if save_analysis_to_db(project_name, "5_whys", analysis):
-                    st.success("✅ Análise dos 5 Porquês salva com sucesso!")
+                    st.success("✅ Análise dos 5 Porquês + Plano de Ação 5W2H salva com sucesso!")
                 else:
                     st.error("❌ Falha ao salvar a análise.")
     
     with col_export:
-        if st.button("📥 Exportar PDF/TXT", use_container_width=True, key="export_5why_btn"):
+        if st.button("📥 Exportar Relatório", use_container_width=True, key="export_5why_btn"):
             if problem or any(whys):
                 report = f"""
-ANÁLISE DOS 5 PORQUÊS
-=====================
+╔═══════════════════════════════════════════════════════════════╗
+║           ANÁLISE DOS 5 PORQUÊS + PLANO DE AÇÃO 5W2H         ║
+╚═══════════════════════════════════════════════════════════════╝
+
 Projeto: {project_name}
 Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}
 
-PROBLEMA:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROBLEMA IDENTIFICADO:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {problem if problem else 'Não definido'}
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OS 5 PORQUÊS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
                 for i, why in enumerate(whys):
                     if why:
-                        report += f"\nPor quê {i+1}?\n{why}\n"
+                        report += f"\n{i+1}. Por quê?\n   → {why}\n"
                 
                 report += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CAUSA RAIZ IDENTIFICADA:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {root_cause if root_cause else 'Não identificada'}
 
-PLANO DE AÇÃO:
-{action_plan if action_plan else 'Não definido'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLANO DE AÇÃO - 5W2H:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
                 
+                for i, action in enumerate(st.session_state.action_plan_5w2h):
+                    if action.get('what'):
+                        report += f"""
+┌─────────────────────────────────────────────────────────────┐
+│ AÇÃO {i+1}                                                     │
+└─────────────────────────────────────────────────────────────┘
+
+  What (O quê?)      : {action.get('what', 'N/A')}
+  Why (Por quê?)     : {action.get('why', 'N/A')}
+  Where (Onde?)      : {action.get('where', 'N/A')}
+  When (Quando?)     : {action.get('when', 'N/A')}
+  Who (Quem?)        : {action.get('who', 'N/A')}
+  How (Como?)        : {action.get('how', 'N/A')}
+  How Much (Custo?)  : {action.get('how_much', 'N/A')}
+
+"""
+                
+                report += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                report += "Fim do Relatório\n"
+                
                 st.download_button(
-                    label="📥 Download Relatório (TXT)",
+                    label="📥 Download Relatório Completo (TXT)",
                     data=report.encode('utf-8'),
-                    file_name=f"5_porques_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    file_name=f"5_porques_5w2h_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                     mime="text/plain",
                     key="download_5why_report"
                 )
@@ -3392,40 +3539,32 @@ PLANO DE AÇÃO:
             st.session_state.five_whys_problem = ''
             st.session_state.five_whys_list = ['', '', '', '', '']
             st.session_state.five_whys_root = ''
-            st.session_state.five_whys_action = ''
+            st.session_state.action_plan_5w2h = []
             st.rerun()
     
-    # Visualização em diagrama
+    # Resumo visual
     if problem and any(whys):
         st.markdown("---")
-        st.subheader("📊 Visualização da Cadeia de Causalidade")
+        st.subheader("📊 Resumo da Análise")
         
-        filled_whys = [(i, why) for i, why in enumerate(whys) if why]
+        filled_whys = [w for w in whys if w]
+        filled_actions = [a for a in st.session_state.action_plan_5w2h if a.get('what')]
         
-        # Resumo visual
-        st.info(f"""
-        **Resumo da Análise:**
-        - ✅ Problema definido
-        - ✅ {len(filled_whys)} de 5 porquês respondidos
-        - {'✅' if root_cause else '⚠️'} Causa raiz {'identificada' if root_cause else 'pendente'}
-        - {'✅' if action_plan else '⚠️'} Plano de ação {'definido' if action_plan else 'pendente'}
-        """)
+        col1, col2, col3, col4 = st.columns(4)
         
-        # Diagrama visual simples
-        st.markdown("**Fluxo da Análise:**")
-        st.markdown(f"🔴 **Problema:** {problem[:100]}...")
+        col1.metric("Porquês Respondidos", f"{len(filled_whys)}/5")
+        col2.metric("Causa Raiz", "✅" if root_cause else "⚠️")
+        col3.metric("Ações Planejadas", len(filled_actions))
         
-        for i, why in filled_whys:
-            st.markdown(f"⬇️")
-            st.markdown(f"❓ **Por quê {i+1}:** {why[:100]}...")
-        
-        if root_cause:
-            st.markdown(f"⬇️")
-            st.markdown(f"🎯 **CAUSA RAIZ:** {root_cause[:100]}...")
-        
-        if action_plan:
-            st.markdown(f"⬇️")
-            st.markdown(f"📋 **AÇÃO:** {action_plan[:100]}...")
+        # Calcular completude média das ações
+        if filled_actions:
+            total_completeness = 0
+            for action in filled_actions:
+                filled = sum([bool(action.get(k)) for k in ['what', 'why', 'where', 'when', 'who', 'how', 'how_much']])
+                total_completeness += (filled / 7)
+            avg_completeness = (total_completeness / len(filled_actions)) * 100
+            col4.metric("Completude Média", f"{avg_completeness:.0f}%")
+
 
 
 ################################################################################################################################################################################################################################
