@@ -132,24 +132,42 @@ with st.sidebar:
     st.divider()
     
     # Links para páginas
-    st.subheader("📑 Fases DMAIC")
-    
-    pages = [
-        {"icon": "🔎", "label": "Define", "path": "app/pages/1_🔎_Define.py"},
-        {"icon": "🔪", "label": "Measure", "path": "app/pages/2_🔪_Measure.py"},
-        {"icon": "📊", "label": "Analyze", "path": "app/pages/3_📊_Analyze.py"},
-        {"icon": "🛠️", "label": "Improve", "path": "app/pages/4_🛠️_Improve.py"},
-        {"icon": "✅", "label": "Control", "path": "app/pages/5_✅_Control.py"}
-    ]
-    
-    for page in pages:
-        st.page_link(page["path"], label=page["label"], icon=page["icon"], use_container_width=True)
-    
-    # Ferramentas adicionais
-    st.divider()
-    st.subheader("🛠️ Ferramentas")
-    
-    st.page_link("app/pages/6_🔍_Diagnostico_Supabase.py", label="Diagnóstico Supabase", icon="🔍", use_container_width=True)
+st.subheader("📋 Fases DMAIC")
+
+# Criar 5 colunas para os botões ficarem lado a lado
+col1, col2, col3, col4, col5 = st.columns(5)
+
+# Botão Define
+with col1:
+    if st.button("🔎\nDefine", use_container_width=True, key="btn_define"):
+        st.switch_page("pages/1_🔎_Define.py")
+
+# Botão Measure
+with col2:
+    if st.button("🔪\nMeasure", use_container_width=True, key="btn_measure"):
+        st.switch_page("pages/2_🔪_Measure.py")
+
+# Botão Analyze
+with col3:
+    if st.button("📊\nAnalyze", use_container_width=True, key="btn_analyze"):
+        st.switch_page("pages/3_📊_Analyze.py")
+
+# Botão Improve
+with col4:
+    if st.button("🛠️\nImprove", use_container_width=True, key="btn_improve"):
+        st.switch_page("pages/4_🛠️_Improve.py")
+
+# Botão Control
+with col5:
+    if st.button("✅\nControl", use_container_width=True, key="btn_control"):
+        st.switch_page("pages/5_✅_Control.py")
+
+# Ferramentas adicionais
+st.divider()
+st.subheader("⚙️ Ferramentas")
+
+if st.button("🔍 Diagnóstico Supabase", use_container_width=True, key="btn_diagnostico"):
+    st.switch_page("pages/6_🔍_Diagnostico_Supabase.py")
 
 # Conteúdo principal
 # Criar 3 colunas para métricas
