@@ -499,354 +499,230 @@ with tabs[1]:
 
 
 # ========================= TAB 3: ISHIKAWA CORRIGIDO (SEM RESET) =========================
-with tabs[2]:
-    st.header("🎯 Diagrama de Ishikawa (Espinha de Peixe)")
+with tab2:
+    st.subheader("🐟 Ishikawa Diagram (Fishbone)")
     
-    # Inicializar o estado persistente para Ishikawa
-    if 'ishikawa_data' not in st.session_state:
-        st.session_state.ishikawa_data = {
-            'problem': '',
-            'categories': {
-                "Método": {'num_causes': 3, 'causes': {}},
-                "Máquina": {'num_causes': 3, 'causes': {}},
-                "Mão de obra": {'num_causes': 3, 'causes': {}},
-                "Material": {'num_causes': 3, 'causes': {}},
-                "Medida": {'num_causes': 3, 'causes': {}},
-                "Meio ambiente": {'num_causes': 3, 'causes': {}}
-            }
-        }
-    
-    # Campo do problema - salvar no session_state
-    problem = st.text_input(
-        "Defina o problema central:", 
-        value=st.session_state.ishikawa_data.get('problem', ''),
-        key="ishikawa_problem_input"
-    )
-    st.session_state.ishikawa_data['problem'] = problem
-    
-    # Container principal para evitar recarregamento
-    main_container = st.container()
-    
-    with main_container:
-        # Usar columns ao invés de tabs para evitar reset
-        st.subheader("📝 Adicionar Causas por Categoria")
+    if st.session_state.analysis_data:
+        problems = list(st.session_state.analysis_data.keys())
+        selected_problem = st.selectbox("Select a problem to analyze:", problems, key="ishikawa_problem")
         
-        # Opção de visualização
-        view_mode = st.radio(
-            "Modo de visualização:",
-            ["Todas as Categorias", "Uma por Vez"],
-            horizontal=True,
-            key="ishikawa_view_mode"
-        )
-        
-        if view_mode == "Uma por Vez":
-            # Seletor de categoria
-            selected_category = st.selectbox(
-                "Selecione a categoria:",
-                list(st.session_state.ishikawa_data['categories'].keys()),
-                key="ishikawa_selected_cat"
-            )
+        if selected_problem:
+            causes = st.session_state.analysis_data[selected_problem]
             
-            categories_to_show = [selected_category]
-        else:
-            categories_to_show = list(st.session_state.ishikawa_data['categories'].keys())
-        
-        # Processar cada categoria
-        for category in categories_to_show:
-            with st.expander(f"📌 {category}", expanded=(view_mode == "Uma por Vez")):
+            # Create Ishikawa diagram
+            def create_ishikawa_diagram(problem, causes):
+                fig = go.Figure()
                 
-                # Container para a categoria
-                cat_container = st.container()
+                # Define categories and their positions
+                categories = ['Method', 'Machine', 'Material', 'Manpower', 'Measurement', 'Environment']
                 
-                with cat_container:
-                    # Controle do número de causas
-                    col1, col2, col3 = st.columns([2, 1, 1])
-                    
-                    with col1:
-                        # Usar o valor do session_state
-                        current_num = st.session_state.ishikawa_data['categories'][category]['num_causes']
-                        st.write(f"**Número de campos: {current_num}**")
-                    
-                    with col2:
-                        if st.button("➕", key=f"add_btn_{category}", help="Adicionar campo"):
-                            st.session_state.ishikawa_data['categories'][category]['num_causes'] = min(10, current_num + 1)
-                            st.rerun()
-                    
-                    with col3:
-                        if st.button("➖", key=f"rem_btn_{category}", help="Remover campo"):
-                            st.session_state.ishikawa_data['categories'][category]['num_causes'] = max(1, current_num - 1)
-                            st.rerun()
-                    
-                    # Campos de entrada para as causas
-                    causes_list = []
-                    num_causes = st.session_state.ishikawa_data['categories'][category]['num_causes']
-                    
-                    for i in range(num_causes):
-                        # Recuperar valor salvo se existir
-                        saved_value = st.session_state.ishikawa_data['categories'][category]['causes'].get(i, '')
-                        
-                        cause = st.text_input(
-                            f"Causa {i+1}:",
-                            value=saved_value,
-                            key=f"ishikawa_cause_{category}_{i}",
-                            placeholder=f"Descreva a causa {i+1}"
-                        )
-                        
-                        # Salvar no session_state
-                        st.session_state.ishikawa_data['categories'][category]['causes'][i] = cause
-                        
-                        if cause:
-                            causes_list.append(cause)
-                    
-                    # Resumo
-                    if causes_list:
-                        st.success(f"✅ {len(causes_list)} causa(s) preenchida(s)")
-                    else:
-                        st.info("💡 Preencha as causas acima")
-        
-        # Entrada rápida (em expander separado)
-        with st.expander("⚡ Entrada Rápida - Colar Lista"):
-            col1, col2 = st.columns([1, 2])
-            
-            with col1:
-                quick_category = st.selectbox(
-                    "Categoria:",
-                    list(st.session_state.ishikawa_data['categories'].keys()),
-                    key="quick_cat_select"
+                # Color scheme for better visibility
+                category_colors = {
+                    'Method': '#FF6B6B',      # Coral Red
+                    'Machine': '#4ECDC4',      # Turquoise
+                    'Material': '#45B7D1',     # Sky Blue
+                    'Manpower': '#96CEB4',     # Sage Green
+                    'Measurement': '#FFEAA7',  # Light Yellow
+                    'Environment': '#DDA0DD'   # Plum
+                }
+                
+                # Main spine (backbone) - make it more visible
+                fig.add_trace(go.Scatter(
+                    x=[-2, 2], 
+                    y=[0, 0],
+                    mode='lines',
+                    line=dict(color='#FAFAFA', width=4),  # White thick line
+                    hoverinfo='skip'
+                ))
+                
+                # Add problem at the head (right side)
+                fig.add_annotation(
+                    x=2.1,
+                    y=0,
+                    text=f"<b>{problem}</b>",
+                    showarrow=False,
+                    font=dict(size=16, color='#FFFFFF'),
+                    bgcolor='#FF4B4B',  # Streamlit red
+                    bordercolor='#FFFFFF',
+                    borderwidth=2,
+                    borderpad=8,
+                    xanchor='left'
                 )
-            
-            with col2:
-                quick_input = st.text_area(
-                    "Cole as causas (uma por linha):",
-                    height=100,
-                    key="quick_causes_input"
-                )
-            
-            if st.button("➕ Adicionar Lista", key="add_quick_list"):
-                if quick_input:
-                    lines = [line.strip() for line in quick_input.split('\n') if line.strip()]
+                
+                # Distribute causes among categories
+                causes_per_category = {}
+                for i, cause in enumerate(causes):
+                    category = categories[i % len(categories)]
+                    if category not in causes_per_category:
+                        causes_per_category[category] = []
+                    causes_per_category[category].append(cause)
+                
+                # Draw category branches and causes
+                for i, category in enumerate(categories):
+                    # Determine position (top or bottom)
+                    y_direction = 1 if i % 2 == 0 else -1
+                    x_pos = -1.5 + (i * 0.6)
+                    y_pos = y_direction * 0.7
                     
-                    # Adicionar as causas
-                    cat_data = st.session_state.ishikawa_data['categories'][quick_category]
-                    
-                    # Ajustar número de campos se necessário
-                    current_causes = len([v for v in cat_data['causes'].values() if v])
-                    new_total = current_causes + len(lines)
-                    cat_data['num_causes'] = min(10, new_total)
-                    
-                    # Adicionar as novas causas
-                    start_index = current_causes
-                    for i, line in enumerate(lines[:10-current_causes]):
-                        cat_data['causes'][start_index + i] = line
-                    
-                    st.success(f"✅ {len(lines)} causas adicionadas a {quick_category}")
-                    st.rerun()
-    
-    # Separador visual
-    st.divider()
-    
-    # Botões de ação (fora do container principal)
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        if st.button("🎨 Gerar Diagrama", type="primary", key="gen_ishikawa_btn"):
-            st.session_state.show_ishikawa_diagram = True
-    
-    with col2:
-        if st.button("💾 Salvar Análise", key="save_ishikawa_btn"):
-            st.session_state.save_ishikawa = True
-    
-    with col3:
-        if st.button("📥 Exportar", key="export_ishikawa_btn"):
-            st.session_state.export_ishikawa = True
-    
-    with col4:
-        if st.button("🗑️ Limpar Tudo", key="clear_ishikawa_btn"):
-            # Limpar dados
-            for cat in st.session_state.ishikawa_data['categories'].values():
-                cat['num_causes'] = 3
-                cat['causes'] = {}
-            st.session_state.ishikawa_data['problem'] = ''
-            st.rerun()
-    
-    # Gerar diagrama se solicitado
-    if st.session_state.get('show_ishikawa_diagram', False):
-        # Coletar todas as causas preenchidas
-        categories_filled = {}
-        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
-            causes = [v for v in cat_data['causes'].values() if v]
-            if causes:
-                categories_filled[cat_name] = causes
-        
-        if not problem:
-            st.warning("⚠️ Por favor, defina o problema primeiro")
-        elif not categories_filled:
-            st.warning("⚠️ Adicione pelo menos uma causa")
-        else:
-            # Criar o diagrama
-            fig = go.Figure()
-            
-        # Na função create_ishikawa_diagram(), modifique a parte do layout:
-        
-        fig.update_layout(
-            title={
-                'text': f"Ishikawa Diagram - {selected_problem}",
-                'x': 0.5,
-                'xanchor': 'center',
-                'font': {'size': 20, 'color': '#FAFAFA'}  # Título em cor clara
-            },
-            showlegend=False,
-            hovermode='closest',
-            margin=dict(t=100, b=50, l=50, r=50),
-            height=600,
-            plot_bgcolor='#0E1117',  # Fundo do gráfico (área de plotagem)
-            paper_bgcolor='#0E1117',  # Fundo do papel (área total)
-            xaxis={
-                'showgrid': False,
-                'zeroline': False,
-                'showticklabels': False,
-                'showline': False,
-                'range': [-2.5, 2.5]
-            },
-            yaxis={
-                'showgrid': False,
-                'zeroline': False,
-                'showticklabels': False,
-                'showline': False,
-                'range': [-1.5, 1.5]
-            }
-        )
-        
-        # Também ajuste as cores das linhas e textos:
-        # Para a linha principal (espinha)
-        fig.add_trace(go.Scatter(
-            x=[-2, 2], y=[0, 0],
-            mode='lines',
-            line=dict(color='#FF4B4B', width=3),  # Vermelho Streamlit
-            hoverinfo='skip'
-        ))
-        
-        # Para as linhas das categorias (espinhas laterais)
-        # Use cores diferentes para cada categoria
-        category_colors = {
-            'Method': '#00D4FF',      # Ciano
-            'Machine': '#FFDD00',      # Amarelo
-            'Material': '#00FF88',     # Verde
-            'Manpower': '#FF6B6B',     # Vermelho claro
-            'Measurement': '#B794F4',  # Roxo
-            'Environment': '#4ECDC4'   # Turquesa
-        }
-
-            
-            # Adicionar categorias e causas
-            for i, (category, causes) in enumerate(categories_filled.items()):
-                if i < len(positions):
-                    x_pos, y_pos = positions[i]
-                    color = colors[i % len(colors)]
-                    
-                    # Linha da categoria
+                    # Category branch line - make it more visible
                     fig.add_trace(go.Scatter(
-                        x=[x_pos, x_pos], y=[5, y_pos],
+                        x=[x_pos, x_pos + 0.3, 0],
+                        y=[y_pos, y_pos * 0.5, 0],
                         mode='lines',
-                        line=dict(color=color, width=2)
+                        line=dict(
+                            color=category_colors[category], 
+                            width=3
+                        ),
+                        hoverinfo='skip'
                     ))
                     
-                    # Nome da categoria
+                    # Category label with improved visibility
                     fig.add_annotation(
-                        x=x_pos, y=y_pos + (0.3 if y_pos > 5 else -0.3),
+                        x=x_pos,
+                        y=y_pos * 1.2,
                         text=f"<b>{category}</b>",
                         showarrow=False,
-                        font=dict(size=11, color=color),
-                        bgcolor='rgba(255,255,255,0.8)'
+                        font=dict(size=14, color='#FFFFFF'),
+                        bgcolor=category_colors[category],
+                        bordercolor='#FFFFFF',
+                        borderwidth=1,
+                        borderpad=6,
+                        opacity=0.9
                     )
                     
-                    # Adicionar causas
-                    for j, cause in enumerate(causes[:6]):  # Limitar visualização
-                        offset = 0.4 * (j + 1)
-                        cause_y = y_pos + (offset if y_pos > 5 else -offset)
-                        
-                        fig.add_annotation(
-                            x=x_pos + 0.2, y=cause_y,
-                            text=cause[:30] + '...' if len(cause) > 30 else cause,
-                            showarrow=False,
-                            font=dict(size=9),
-                            align='left'
-                        )
+                    # Add causes for this category
+                    if category in causes_per_category:
+                        for j, cause in enumerate(causes_per_category[category]):
+                            cause_x = x_pos - 0.1 * (j + 1)
+                            cause_y = y_pos * (1 + 0.2 * (j + 1))
+                            
+                            # Cause line - subtle but visible
+                            fig.add_trace(go.Scatter(
+                                x=[x_pos, cause_x],
+                                y=[y_pos, cause_y],
+                                mode='lines',
+                                line=dict(
+                                    color=category_colors[category], 
+                                    width=1.5,
+                                    dash='dot'
+                                ),
+                                hoverinfo='skip',
+                                opacity=0.7
+                            ))
+                            
+                            # Cause text with improved readability
+                            display_text = cause[:40] + "..." if len(cause) > 40 else cause
+                            
+                            fig.add_annotation(
+                                x=cause_x,
+                                y=cause_y,
+                                text=f"<b>{display_text}</b>",
+                                showarrow=True,
+                                arrowhead=2,
+                                arrowsize=1,
+                                arrowwidth=2,
+                                arrowcolor=category_colors[category],
+                                font=dict(size=11, color='#FFFFFF'),
+                                bgcolor='rgba(30, 30, 30, 0.9)',
+                                bordercolor=category_colors[category],
+                                borderwidth=1,
+                                borderpad=4,
+                                ax=-30 if y_direction > 0 else 30,
+                                ay=-20 if y_direction > 0 else 20,
+                                opacity=0.95
+                            )
+                
+                # Update layout for dark theme
+                fig.update_layout(
+                    title={
+                        'text': f"<b>Ishikawa Diagram - Root Cause Analysis</b>",
+                        'x': 0.5,
+                        'xanchor': 'center',
+                        'font': {'size': 22, 'color': '#FFFFFF'}
+                    },
+                    showlegend=False,
+                    hovermode='closest',
+                    margin=dict(t=120, b=80, l=80, r=80),
+                    height=700,
+                    plot_bgcolor='#0E1117',  # Streamlit dark background
+                    paper_bgcolor='#0E1117',  # Streamlit dark background
+                    xaxis={
+                        'showgrid': False,
+                        'zeroline': False,
+                        'showticklabels': False,
+                        'showline': False,
+                        'range': [-2.8, 2.8]
+                    },
+                    yaxis={
+                        'showgrid': False,
+                        'zeroline': False,
+                        'showticklabels': False,
+                        'showline': False,
+                        'range': [-1.8, 1.8]
+                    },
+                    hoverlabel=dict(
+                        bgcolor='#262730',
+                        font_size=12,
+                        font_family="Arial",
+                        font_color='#FFFFFF'
+                    )
+                )
+                
+                # Add a subtle grid for better visual reference
+                for x in [-2, -1, 0, 1, 2]:
+                    fig.add_shape(
+                        type="line",
+                        x0=x, x1=x,
+                        y0=-1.8, y1=1.8,
+                        line=dict(color='rgba(255,255,255,0.05)', width=1)
+                    )
+                
+                for y in [-1, 0, 1]:
+                    fig.add_shape(
+                        type="line",
+                        x0=-2.8, x1=2.8,
+                        y0=y, y1=y,
+                        line=dict(color='rgba(255,255,255,0.05)', width=1)
+                    )
+                
+                return fig
             
-            # Problema/Efeito
-            fig.add_annotation(
-                x=10.5, y=5,
-                text=f"<b>PROBLEMA</b><br>{problem[:50]}",
-                showarrow=False,
-                font=dict(size=12, color='white'),
-                bgcolor='red',
-                borderpad=8
-            )
-            
+            fig = create_ishikawa_diagram(selected_problem, causes)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Estatísticas
-            total_causes = sum(len(causes) for causes in categories_filled.values())
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total de Causas", total_causes)
-            with col2:
-                st.metric("Categorias Utilizadas", len(categories_filled))
-            with col3:
-                max_cat = max(categories_filled.items(), key=lambda x: len(x[1]))
-                st.metric("Categoria Principal", max_cat[0])
-        
-        # Reset flag
-        st.session_state.show_ishikawa_diagram = False
-    
-    # Salvar análise se solicitado
-    if st.session_state.get('save_ishikawa', False):
-        categories_filled = {}
-        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
-            causes = [v for v in cat_data['causes'].values() if v]
-            if causes:
-                categories_filled[cat_name] = causes
-        
-        if categories_filled and problem:
-            analysis_data = {
-                'problem': problem,
-                'categories': categories_filled,
-                'total_causes': sum(len(c) for c in categories_filled.values()),
-                'timestamp': datetime.now().isoformat()
+            # Add legend for categories
+            st.markdown("### 📊 Category Legend")
+            cols = st.columns(3)
+            categories = ['Method', 'Machine', 'Material', 'Manpower', 'Measurement', 'Environment']
+            category_colors = {
+                'Method': '#FF6B6B',
+                'Machine': '#4ECDC4',
+                'Material': '#45B7D1',
+                'Manpower': '#96CEB4',
+                'Measurement': '#FFEAA7',
+                'Environment': '#DDA0DD'
             }
             
-            if save_analysis_to_db(project_name, "ishikawa", analysis_data):
-                st.success("✅ Análise Ishikawa salva com sucesso!")
-        
-        st.session_state.save_ishikawa = False
-    
-    # Exportar se solicitado
-    if st.session_state.get('export_ishikawa', False):
-        # Criar DataFrame para export
-        export_data = []
-        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
-            for i, cause in cat_data['causes'].items():
-                if cause:
-                    export_data.append({
-                        'Categoria': cat_name,
-                        'Número': i + 1,
-                        'Causa': cause
-                    })
-        
-        if export_data:
-            df_export = pd.DataFrame(export_data)
-            csv = df_export.to_csv(index=False)
+            for i, category in enumerate(categories):
+                with cols[i % 3]:
+                    st.markdown(
+                        f"""
+                        <div style='display: flex; align-items: center; margin: 5px 0;'>
+                            <div style='width: 20px; height: 20px; background-color: {category_colors[category]}; 
+                                        border-radius: 3px; margin-right: 10px; border: 1px solid #FFFFFF;'></div>
+                            <span style='color: #FFFFFF; font-weight: bold;'>{category}</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
             
-            st.download_button(
-                label="📥 Download CSV",
-                data=csv,
-                file_name=f"ishikawa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="download_ishikawa_csv"
-            )
-        
-        st.session_state.export_ishikawa = False
+            # Download button
+            if st.button("📥 Download Ishikawa Diagram", key="download_ishikawa"):
+                fig.write_html("ishikawa_diagram.html")
+                st.success("Diagram saved as 'ishikawa_diagram.html'")
+    else:
+        st.info("Please add some analysis data in the Data Input page first.")
+
 
 
 
