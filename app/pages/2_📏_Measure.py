@@ -396,14 +396,25 @@ with tab2:
     
     # Upload de dados
     uploaded_file = st.file_uploader(
-        "Faça upload dos dados de MSA (CSV)",
-        type=['csv'],
+        "Faça upload dos dados de MSA (CSV, Excel, PDF)",
+        type=['csv', 'xlsx', 'xls', 'pdf'],
         key="msa_upload"
     )
     
     if uploaded_file is not None:
         try:
-            msa_data = pd.read_csv(uploaded_file)
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+            
+            if file_extension == 'csv':
+                msa_data = pd.read_csv(uploaded_file)
+            elif file_extension in ['xlsx', 'xls']:
+                msa_data = pd.read_excel(uploaded_file)
+            elif file_extension == 'pdf':
+                st.warning("⚠️ Arquivos PDF requerem extração manual. Por favor, converta para CSV ou Excel.")
+                st.stop()
+            else:
+                st.error("❌ Formato não suportado")
+                st.stop()
             
             # Salvar no banco
             if supabase and st.button("💾 Salvar dados MSA no projeto"):
@@ -517,14 +528,22 @@ with tab3:
     
     # Upload de dados do processo
     uploaded_file = st.file_uploader(
-        "Faça upload dos dados do processo (CSV)",
-        type=['csv'],
+        "Faça upload dos dados do processo (CSV, Excel)",
+        type=['csv', 'xlsx', 'xls'],
         key="process_upload"
     )
     
     if uploaded_file is not None:
         try:
-            process_data = pd.read_csv(uploaded_file)
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+            
+            if file_extension == 'csv':
+                process_data = pd.read_csv(uploaded_file)
+            elif file_extension in ['xlsx', 'xls']:
+                process_data = pd.read_excel(uploaded_file)
+            else:
+                st.error("❌ Formato não suportado")
+                st.stop()
             
             # Salvar no banco
             if supabase and st.button("💾 Salvar dados do processo", key="save_process"):
@@ -668,14 +687,22 @@ with tab4:
     
     # Upload de dados
     uploaded_file = st.file_uploader(
-        "Faça upload dos dados para visualização (CSV)",
-        type=['csv'],
+        "Faça upload dos dados para visualização (CSV, Excel)",
+        type=['csv', 'xlsx', 'xls'],
         key="viz_upload"
     )
     
     if uploaded_file is not None:
         try:
-            viz_data = pd.read_csv(uploaded_file)
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+            
+            if file_extension == 'csv':
+                viz_data = pd.read_csv(uploaded_file)
+            elif file_extension in ['xlsx', 'xls']:
+                viz_data = pd.read_excel(uploaded_file)
+            else:
+                st.error("❌ Formato não suportado")
+                st.stop()
             
             st.subheader("📊 Criar Visualização")
             
