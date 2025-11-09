@@ -2165,95 +2165,366 @@ with tabs[6]:
                     
                     if strong_corr:
                         st.dataframe(pd.DataFrame(strong_corr), use_container_width=True)
+################################################################################################################################################################################################################################
 
-# ========================= TAB 8: BOX PLOT & OUTLIERS =========================
+# ========================= TAB 8: BOX PLOT & OUTLIERS (COM SALVAMENTO) =========================
 with tabs[7]:
     st.header("📊 Box Plot e Análise de Outliers")
+    
+    # Verificar se há projeto selecionado
+    project_name = st.session_state.get('project_name', None)
+    
+    if not project_name:
+        st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
+        st.stop()
+    
+    # Botões de carregar e nova análise
+    col_load, col_new = st.columns([1, 1])
+    
+    with col_load:
+        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_outliers"):
+            if not supabase:
+                st.error("❌ Conexão com Supabase não disponível.")
+            else:
+                try:
+                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'outliers_analysis').order('created_at', desc=True).limit(1).execute()
+                    
+                    if response.data and len(response.data) > 0:
+                        loaded_data = response.data[0]['results']
+                        st.session_state.outliers_results = loaded_data
+                        st.success("✅ Análise de outliers carregada com sucesso!")
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ Nenhuma análise de outliers salva encontrada para este projeto.")
+                except Exception as e:
+                    st.error(f"Erro ao carregar dados: {str(e)}")
+    
+    with col_new:
+        if st.button("🆕 Nova Análise", use_container_width=True, key="new_outliers"):
+            if 'outliers_results' in st.session_state:
+                del st.session_state.outliers_results
+            if 'treated_data' in st.session_state:
+                del st.session_state.treated_data
+            st.rerun()
+    
+    st.divider()
     
     if data is not None:
         numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
         
         if numeric_cols:
             selected_cols = st.multiselect(
-                "Selecione as variáveis:",
+                "Selecione as variáveis para análise:",
                 numeric_cols,
                 default=numeric_cols[:3] if len(numeric_cols) > 3 else numeric_cols,
                 key="box_cols"
             )
             
-            if selected_cols and st.button("Gerar Box Plots", key="gen_box"):
-                # Box plots
-                fig = go.Figure()
+            # Botões de ação
+            col_exec, col_save, col_export = st.columns([1, 1, 1])
+            
+            with col_exec:
+                execute_analysis = st.button("🔄 Gerar Análise", key="gen_box", use_container_width=True, type="primary")
+            
+            with col_save:
+                save_analysis = st.button("💾 Salvar Análise", key="save_outliers", use_container_width=True)
+            
+            with col_export:
+                export_analysis = st.button("📥 Exportar Resultados", key="export_outliers", use_container_width=True)
+            
+            # Executar análise
+            current_results = st.session_state.get('outliers_results') or {}
+            if (execute_analysis or current_results.get('selected_cols') == selected_cols) and selected_cols:
                 
-                outliers_summary = []
-                
-                for col in selected_cols:
-                    col_data = data[col].dropna()
-                    
-                    # Calcular outliers usando IQR
-                    Q1 = col_data.quantile(0.25)
-                    Q3 = col_data.quantile(0.75)
-                    IQR = Q3 - Q1
-                    lower_bound = Q1 - 1.5 * IQR
-                    upper_bound = Q3 + 1.5 * IQR
-                    
-                    outliers = col_data[(col_data < lower_bound) | (col_data > upper_bound)]
-                    
-                    fig.add_trace(go.Box(y=col_data, name=col))
-                    
-                    outliers_summary.append({
-                        'Variável': col,
-                        'Q1': Q1,
-                        'Q3': Q3,
-                        'IQR': IQR,
-                        'Limite Inferior': lower_bound,
-                        'Limite Superior': upper_bound,
-                        'Outliers': len(outliers),
-                        '% Outliers': (len(outliers) / len(col_data) * 100)
-                    })
-                
-                fig.update_layout(title="Box Plots - Análise de Outliers", height=500)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Resumo de outliers
-                st.subheader("📋 Resumo de Outliers")
-                outliers_df = pd.DataFrame(outliers_summary)
-                st.dataframe(outliers_df, use_container_width=True)
-                
-                # Tratamento de outliers
-                st.subheader("🔧 Tratamento de Outliers")
-                treatment = st.selectbox(
-                    "Método de tratamento:",
-                    ["Nenhum", "Remover", "Capping (Limitar)", "Transformação Log", "Z-Score"]
-                )
-                
-                if treatment != "Nenhum" and st.button("Aplicar Tratamento"):
-                    treated_data = data.copy()
+                if execute_analysis:
+                    outliers_summary = []
+                    all_outliers_data = {}
                     
                     for col in selected_cols:
-                        if treatment == "Remover":
-                            Q1 = treated_data[col].quantile(0.25)
-                            Q3 = treated_data[col].quantile(0.75)
-                            IQR = Q3 - Q1
-                            treated_data = treated_data[
-                                (treated_data[col] >= Q1 - 1.5 * IQR) &
-                                (treated_data[col] <= Q3 + 1.5 * IQR)
-                            ]
-                        elif treatment == "Capping":
-                            Q1 = treated_data[col].quantile(0.25)
-                            Q3 = treated_data[col].quantile(0.75)
-                            IQR = Q3 - Q1
-                            lower = Q1 - 1.5 * IQR
-                            upper = Q3 + 1.5 * IQR
-                            treated_data[col] = treated_data[col].clip(lower=lower, upper=upper)
-                        elif treatment == "Transformação Log":
-                            treated_data[col] = np.log1p(treated_data[col])
-                        elif treatment == "Z-Score":
-                            z_scores = np.abs(stats.zscore(treated_data[col].dropna()))
-                            treated_data = treated_data[z_scores < 3]
+                        col_data = data[col].dropna()
+                        
+                        # Calcular outliers usando IQR
+                        Q1 = col_data.quantile(0.25)
+                        Q3 = col_data.quantile(0.75)
+                        IQR = Q3 - Q1
+                        lower_bound = Q1 - 1.5 * IQR
+                        upper_bound = Q3 + 1.5 * IQR
+                        
+                        outliers = col_data[(col_data < lower_bound) | (col_data > upper_bound)]
+                        
+                        outliers_summary.append({
+                            'Variável': col,
+                            'Q1': float(Q1),
+                            'Q3': float(Q3),
+                            'IQR': float(IQR),
+                            'Limite Inferior': float(lower_bound),
+                            'Limite Superior': float(upper_bound),
+                            'N Total': int(len(col_data)),
+                            'N Outliers': int(len(outliers)),
+                            '% Outliers': float(len(outliers) / len(col_data) * 100)
+                        })
+                        
+                        all_outliers_data[col] = {
+                            'data': col_data.tolist(),
+                            'outliers': outliers.tolist(),
+                            'Q1': float(Q1),
+                            'Q3': float(Q3),
+                            'IQR': float(IQR),
+                            'lower_bound': float(lower_bound),
+                            'upper_bound': float(upper_bound)
+                        }
                     
-                    st.success(f"✅ Tratamento '{treatment}' aplicado!")
-                    st.session_state.treated_data = treated_data
+                    # Salvar no session_state
+                    st.session_state.outliers_results = {
+                        'selected_cols': selected_cols,
+                        'outliers_summary': outliers_summary,
+                        'outliers_data': all_outliers_data,
+                        'treatment_applied': None
+                    }
+                
+                # Recuperar resultados
+                results = st.session_state.get('outliers_results')
+                
+                if results:
+                    # Box plots
+                    st.subheader("📊 Box Plots")
+                    fig = go.Figure()
+                    
+                    for col in results['selected_cols']:
+                        col_data = results['outliers_data'][col]['data']
+                        fig.add_trace(go.Box(
+                            y=col_data, 
+                            name=col,
+                            boxmean='sd',
+                            marker_color='lightblue'
+                        ))
+                    
+                    fig.update_layout(
+                        title="Box Plots - Análise de Outliers",
+                        yaxis_title="Valores",
+                        height=500,
+                        showlegend=True
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Resumo de outliers
+                    st.subheader("📋 Resumo de Outliers")
+                    outliers_df = pd.DataFrame(results['outliers_summary'])
+                    
+                    # Formatar DataFrame para melhor visualização
+                    styled_df = outliers_df.style.format({
+                        'Q1': '{:.3f}',
+                        'Q3': '{:.3f}',
+                        'IQR': '{:.3f}',
+                        'Limite Inferior': '{:.3f}',
+                        'Limite Superior': '{:.3f}',
+                        '% Outliers': '{:.2f}%'
+                    }).background_gradient(subset=['% Outliers'], cmap='Reds')
+                    
+                    st.dataframe(styled_df, use_container_width=True)
+                    
+                    # Alertas
+                    high_outliers = [item for item in results['outliers_summary'] if item['% Outliers'] > 5]
+                    if high_outliers:
+                        st.warning(f"⚠️ **Atenção:** {len(high_outliers)} variável(eis) com mais de 5% de outliers detectados!")
+                        for item in high_outliers:
+                            st.write(f"- **{item['Variável']}**: {item['% Outliers']:.2f}% ({item['N Outliers']} de {item['N Total']} valores)")
+                    
+                    # Visualização individual dos outliers
+                    st.subheader("🔍 Detalhamento por Variável")
+                    for col in results['selected_cols']:
+                        with st.expander(f"📌 {col}"):
+                            col_info = results['outliers_data'][col]
+                            
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Total de Outliers", len(col_info['outliers']))
+                            col2.metric("Limite Inferior", f"{col_info['lower_bound']:.3f}")
+                            col3.metric("Limite Superior", f"{col_info['upper_bound']:.3f}")
+                            
+                            if col_info['outliers']:
+                                st.write("**Valores dos Outliers:**")
+                                outliers_sorted = sorted(col_info['outliers'])
+                                st.write(", ".join([f"{v:.3f}" for v in outliers_sorted[:20]]))
+                                if len(outliers_sorted) > 20:
+                                    st.write(f"... e mais {len(outliers_sorted) - 20} valores")
+                    
+                    # Tratamento de outliers
+                    st.markdown("---")
+                    st.subheader("🔧 Tratamento de Outliers")
+                    
+                    col_treatment, col_apply = st.columns([3, 1])
+                    
+                    with col_treatment:
+                        treatment = st.selectbox(
+                            "Método de tratamento:",
+                            ["Nenhum", "Remover", "Capping (Limitar)", "Transformação Log", "Winsorização"],
+                            key="treatment_method"
+                        )
+                    
+                    with col_apply:
+                        st.write("")  # Espaçamento
+                        st.write("")  # Espaçamento
+                        apply_treatment = st.button("✅ Aplicar", key="apply_treatment", use_container_width=True)
+                    
+                    # Descrição dos métodos
+                    treatment_descriptions = {
+                        "Nenhum": "Sem tratamento aplicado.",
+                        "Remover": "Remove todas as linhas que contêm outliers (método IQR).",
+                        "Capping (Limitar)": "Substitui outliers pelos limites inferior/superior calculados.",
+                        "Transformação Log": "Aplica transformação logarítmica (log1p) para reduzir o impacto de valores extremos.",
+                        "Winsorização": "Substitui outliers pelos percentis 5% e 95%."
+                    }
+                    
+                    st.info(f"**{treatment}:** {treatment_descriptions[treatment]}")
+                    
+                    if apply_treatment and treatment != "Nenhum":
+                        treated_data = data.copy()
+                        treatment_log = []
+                        
+                        for col in results['selected_cols']:
+                            original_count = len(treated_data)
+                            
+                            if treatment == "Remover":
+                                Q1 = treated_data[col].quantile(0.25)
+                                Q3 = treated_data[col].quantile(0.75)
+                                IQR = Q3 - Q1
+                                treated_data = treated_data[
+                                    (treated_data[col] >= Q1 - 1.5 * IQR) &
+                                    (treated_data[col] <= Q3 + 1.5 * IQR)
+                                ]
+                                removed = original_count - len(treated_data)
+                                treatment_log.append(f"{col}: {removed} linhas removidas")
+                            
+                            elif treatment == "Capping (Limitar)":
+                                Q1 = treated_data[col].quantile(0.25)
+                                Q3 = treated_data[col].quantile(0.75)
+                                IQR = Q3 - Q1
+                                lower = Q1 - 1.5 * IQR
+                                upper = Q3 + 1.5 * IQR
+                                original_outliers = len(treated_data[(treated_data[col] < lower) | (treated_data[col] > upper)])
+                                treated_data[col] = treated_data[col].clip(lower=lower, upper=upper)
+                                treatment_log.append(f"{col}: {original_outliers} valores limitados")
+                            
+                            elif treatment == "Transformação Log":
+                                if (treated_data[col] < 0).any():
+                                    treatment_log.append(f"{col}: ⚠️ Contém valores negativos, transformação não aplicada")
+                                else:
+                                    treated_data[col] = np.log1p(treated_data[col])
+                                    treatment_log.append(f"{col}: Transformação log aplicada")
+                            
+                            elif treatment == "Winsorização":
+                                lower = treated_data[col].quantile(0.05)
+                                upper = treated_data[col].quantile(0.95)
+                                original_outliers = len(treated_data[(treated_data[col] < lower) | (treated_data[col] > upper)])
+                                treated_data[col] = treated_data[col].clip(lower=lower, upper=upper)
+                                treatment_log.append(f"{col}: {original_outliers} valores winsorizados")
+                        
+                        # Salvar dados tratados
+                        st.session_state.treated_data = treated_data
+                        st.session_state.outliers_results['treatment_applied'] = treatment
+                        st.session_state.outliers_results['treatment_log'] = treatment_log
+                        
+                        st.success(f"✅ Tratamento '{treatment}' aplicado com sucesso!")
+                        
+                        # Log do tratamento
+                        with st.expander("📝 Log do Tratamento"):
+                            for log_entry in treatment_log:
+                                st.write(f"- {log_entry}")
+                        
+                        # Comparação antes/depois
+                        st.subheader("📊 Comparação Antes/Depois")
+                        col_before, col_after = st.columns(2)
+                        
+                        with col_before:
+                            st.metric("Registros Originais", len(data))
+                        
+                        with col_after:
+                            st.metric("Registros Após Tratamento", len(treated_data), 
+                                     delta=len(treated_data) - len(data))
+                        
+                        # Opção de download dos dados tratados
+                        csv_treated = treated_data.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="📥 Download Dados Tratados (CSV)",
+                            data=csv_treated,
+                            file_name=f"dados_tratados_{treatment.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
+                            mime="text/csv"
+                        )
+                    
+                    # Mostrar se já há tratamento aplicado
+                    elif results.get('treatment_applied'):
+                        st.info(f"ℹ️ Tratamento atual: **{results['treatment_applied']}**")
+                        if st.button("🔄 Resetar Tratamento", key="reset_treatment"):
+                            if 'treated_data' in st.session_state:
+                                del st.session_state.treated_data
+                            st.session_state.outliers_results['treatment_applied'] = None
+                            st.rerun()
+            
+            # Salvar análise
+            if save_analysis:
+                results = st.session_state.get('outliers_results')
+                if results:
+                    if save_analysis_to_db(project_name, "outliers_analysis", results):
+                        st.success("✅ Análise de outliers salva com sucesso no Supabase!")
+                    else:
+                        st.error("❌ Falha ao salvar a análise.")
+                else:
+                    st.warning("⚠️ Execute a análise antes de salvar.")
+            
+            # Exportar resultados
+            if export_analysis:
+                results = st.session_state.get('outliers_results')
+                if results:
+                    # Criar relatório
+                    report = f"""
+ANÁLISE DE OUTLIERS - RELATÓRIO COMPLETO
+========================================
+
+VARIÁVEIS ANALISADAS: {', '.join(results['selected_cols'])}
+
+RESUMO GERAL:
+"""
+                    
+                    for item in results['outliers_summary']:
+                        report += f"""
+{item['Variável']}:
+  - Total de Observações: {item['N Total']}
+  - Outliers Detectados: {item['N Outliers']} ({item['% Outliers']:.2f}%)
+  - Q1: {item['Q1']:.3f}
+  - Q3: {item['Q3']:.3f}
+  - IQR: {item['IQR']:.3f}
+  - Limite Inferior: {item['Limite Inferior']:.3f}
+  - Limite Superior: {item['Limite Superior']:.3f}
+"""
+                    
+                    if results.get('treatment_applied'):
+                        report += f"\nTRATAMENTO APLICADO: {results['treatment_applied']}\n"
+                        if results.get('treatment_log'):
+                            report += "\nLOG DO TRATAMENTO:\n"
+                            for log in results['treatment_log']:
+                                report += f"- {log}\n"
+                    
+                    # DataFrame com resumo
+                    outliers_df = pd.DataFrame(results['outliers_summary'])
+                    csv = report + "\n\nRESUMO DETALHADO:\n" + outliers_df.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Download Relatório Completo (CSV)",
+                        data=csv.encode('utf-8'),
+                        file_name=f"outliers_analysis_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("⚠️ Execute a análise antes de exportar.")
+        
+        else:
+            st.warning("⚠️ Nenhuma variável numérica disponível nos dados.")
+    
+    else:
+        st.info("📊 Carregue dados primeiro para realizar análise de outliers.")
+
+
+################################################################################################################################################################################################################################
 
 # ========================= TAB 9: CAPACIDADE =========================
 with tabs[8]:
