@@ -627,43 +627,14 @@ def create_definitive_ishikawa(problem, categories_filled):
 # ==============================================================================
 def load_ishikawa_from_supabase(project_name):
     """Carrega análise Ishikawa salva do Supabase"""
+    if not supabase:
+        return None
+    
     try:
-        # Tenta diferentes formas de importar o supabase
-        supabase = None
-        
-        # Tentativa 1: Importar do config
-        try:
-            from config import supabase
-        except:
-            pass
-        
-        # Tentativa 2: Importar de database
-        if supabase is None:
-            try:
-                from database import supabase
-            except:
-                pass
-        
-        # Tentativa 3: Importar direto
-        if supabase is None:
-            try:
-                import config
-                supabase = config.supabase
-            except:
-                pass
-        
-        # Tentativa 4: Usar st.session_state se disponível
-        if supabase is None:
-            supabase = st.session_state.get('supabase', None)
-        
-        if supabase is None:
-            st.error("❌ Não foi possível conectar ao Supabase. Verifique a configuração.")
-            return None
-        
-        response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('tool_name', 'ishikawa').order('created_at', desc=True).limit(1).execute()
+        response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'ishikawa').order('created_at', desc=True).limit(1).execute()
         
         if response.data and len(response.data) > 0:
-            return response.data[0]['data']
+            return response.data[0]['results']
         return None
         
     except Exception as e:
