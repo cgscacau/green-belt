@@ -135,15 +135,15 @@ with st.sidebar:
     st.subheader("📑 Fases DMAIC")
     
     pages = [
-        ("🔎 Define", "1_🔎_Define.py"),
-        ("📏 Measure", "2_📏_Measure.py"),
-        ("📊 Analyze", "3_📊_Analyze.py"),
-        ("🛠️ Improve", "4_🛠️_Improve.py"),
-        ("✅ Control", "5_✅_Control.py")
+        ("🔎 Define", "app/pages/1_🔎_Define.py"),
+        ("📏 Measure", "app/pages/2_📏_Measure.py"),
+        ("📊 Analyze", "app/pages/3_📊_Analyze.py"),
+        ("🛠️ Improve", "app/pages/4_🛠️_Improve.py"),
+        ("✅ Control", "app/pages/5_✅_Control.py")
     ]
     
     for page_name, page_path in pages:
-        if st.button(page_name, use_container_width=True):
+        if st.button(page_name, use_container_width=True, key=f"btn_{page_name}"):
             st.switch_page(page_path)
     
     # Ferramentas adicionais
