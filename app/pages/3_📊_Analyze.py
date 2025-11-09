@@ -852,9 +852,45 @@ with tabs[2]:
 
 
 
-# ========================= TAB 4: REGRESSÃO =========================
+# ========================= TAB 4: REGRESSÃO (COM SALVAMENTO) =========================
 with tabs[3]:
     st.header("📉 Análise de Regressão")
+    
+    # Verificar se há projeto selecionado
+    project_name = st.session_state.get('project_name', None)
+    
+    if not project_name:
+        st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
+        st.stop()
+    
+    # Botões de carregar e nova análise
+    col_load, col_new = st.columns([1, 1])
+    
+    with col_load:
+        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_regression"):
+            if not supabase:
+                st.error("❌ Conexão com Supabase não disponível.")
+            else:
+                try:
+                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'regression').order('created_at', desc=True).limit(1).execute()
+                    
+                    if response.data and len(response.data) > 0:
+                        loaded_data = response.data[0]['results']
+                        st.session_state.regression_results = loaded_data
+                        st.success("✅ Análise de regressão carregada com sucesso!")
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ Nenhuma análise de regressão salva encontrada para este projeto.")
+                except Exception as e:
+                    st.error(f"Erro ao carregar dados: {str(e)}")
+    
+    with col_new:
+        if st.button("🆕 Nova Análise", use_container_width=True, key="new_regression"):
+            if 'regression_results' in st.session_state:
+                del st.session_state.regression_results
+            st.rerun()
+    
+    st.divider()
     
     if data is not None:
         numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
@@ -868,63 +904,244 @@ with tabs[3]:
                 y_var = st.selectbox("Variável Dependente (Y):", 
                                    [c for c in numeric_cols if c != x_var], key="reg_y")
             
-            if st.button("Executar Regressão", key="run_regression"):
-                from sklearn.linear_model import LinearRegression
-                from sklearn.metrics import r2_score, mean_squared_error
+            # Botões de ação
+            col_exec, col_save, col_export = st.columns([1, 1, 1])
+            
+            with col_exec:
+                execute_regression = st.button("🔄 Executar Regressão", key="run_regression", use_container_width=True, type="primary")
+            
+            with col_save:
+                save_regression = st.button("💾 Salvar Análise", key="save_regression", use_container_width=True)
+            
+            with col_export:
+                export_regression = st.button("📥 Exportar Resultados", key="export_regression", use_container_width=True)
+            
+            # Executar regressão
+            if execute_regression or 'regression_results' in st.session_state:
                 
-                # Preparar dados
-                X = data[[x_var]].dropna()
-                y = data[y_var].dropna()
+                if execute_regression:
+                    from sklearn.linear_model import LinearRegression
+                    from sklearn.metrics import r2_score, mean_squared_error
+                    
+                    # Preparar dados
+                    X = data[[x_var]].dropna()
+                    y = data[y_var].dropna()
+                    
+                    # Alinhar índices
+                    common_idx = X.index.intersection(y.index)
+                    X = X.loc[common_idx]
+                    y = y.loc[common_idx]
+                    
+                    # Regressão
+                    model = LinearRegression()
+                    model.fit(X, y)
+                    y_pred = model.predict(X)
+                    
+                    # Métricas
+                    r2 = r2_score(y, y_pred)
+                    rmse = np.sqrt(mean_squared_error(y, y_pred))
+                    
+                    # Calcular intervalo de confiança (simplificado)
+                    n = len(y)
+                    dof = n - 2  # graus de liberdade
+                    
+                    # Salvar resultados no session_state
+                    st.session_state.regression_results = {
+                        'x_var': x_var,
+                        'y_var': y_var,
+                        'coefficient': float(model.coef_[0]),
+                        'intercept': float(model.intercept_),
+                        'r2': float(r2),
+                        'rmse': float(rmse),
+                        'n_samples': int(n),
+                        'x_values': X.iloc[:, 0].tolist(),
+                        'y_values': y.tolist(),
+                        'y_pred': y_pred.tolist(),
+                        'residuals': (y - y_pred).tolist(),
+                        'equation': f"y = {model.coef_[0]:.4f}x + {model.intercept_:.4f}"
+                    }
                 
-                # Alinhar índices
-                common_idx = X.index.intersection(y.index)
-                X = X.loc[common_idx]
-                y = y.loc[common_idx]
+                # Recuperar resultados (seja de execução nova ou carregados)
+                results = st.session_state.get('regression_results', None)
                 
-                # Regressão
-                model = LinearRegression()
-                model.fit(X, y)
-                y_pred = model.predict(X)
-                
-                # Métricas
-                r2 = r2_score(y, y_pred)
-                rmse = np.sqrt(mean_squared_error(y, y_pred))
-                
-                # Gráfico
-                fig = px.scatter(x=X.iloc[:, 0], y=y, labels={'x': x_var, 'y': y_var})
-                fig.add_trace(go.Scatter(x=X.iloc[:, 0], y=y_pred, mode='lines',
-                                        name='Regressão', line=dict(color='red')))
-                
-                # Equação
-                equation = f"y = {model.coef_[0]:.3f}x + {model.intercept_:.3f}"
-                fig.add_annotation(x=X.iloc[:, 0].max(), y=y.max(),
-                                 text=f"{equation}<br>R² = {r2:.3f}",
-                                 showarrow=False, bgcolor='white')
-                
-                fig.update_layout(title=f"Regressão Linear: {y_var} vs {x_var}")
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Métricas
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("R²", f"{r2:.4f}")
-                with col2:
-                    st.metric("RMSE", f"{rmse:.4f}")
-                with col3:
-                    st.metric("Coeficiente", f"{model.coef_[0]:.4f}")
-                with col4:
-                    st.metric("Intercepto", f"{model.intercept_:.4f}")
-                
-                # Análise de resíduos
-                residuals = y - y_pred
-                
-                fig_res = go.Figure()
-                fig_res.add_trace(go.Scatter(x=y_pred, y=residuals, mode='markers'))
-                fig_res.add_hline(y=0, line_dash="dash", line_color="red")
-                fig_res.update_layout(title="Gráfico de Resíduos",
-                                     xaxis_title="Valores Preditos",
-                                     yaxis_title="Resíduos")
-                st.plotly_chart(fig_res, use_container_width=True)
+                if results:
+                    # Gráfico de regressão
+                    fig = go.Figure()
+                    
+                    # Scatter plot
+                    fig.add_trace(go.Scatter(
+                        x=results['x_values'], 
+                        y=results['y_values'],
+                        mode='markers',
+                        name='Dados Observados',
+                        marker=dict(size=8, color='blue', opacity=0.6)
+                    ))
+                    
+                    # Linha de regressão
+                    fig.add_trace(go.Scatter(
+                        x=results['x_values'], 
+                        y=results['y_pred'],
+                        mode='lines',
+                        name='Regressão',
+                        line=dict(color='red', width=3)
+                    ))
+                    
+                    # Equação e R²
+                    fig.add_annotation(
+                        x=max(results['x_values']), 
+                        y=max(results['y_values']),
+                        text=f"<b>{results['equation']}</b><br>R² = {results['r2']:.4f}",
+                        showarrow=False,
+                        bgcolor='rgba(255, 255, 255, 0.8)',
+                        bordercolor='black',
+                        borderwidth=1,
+                        borderpad=10,
+                        font=dict(size=12)
+                    )
+                    
+                    fig.update_layout(
+                        title=f"<b>Regressão Linear: {results['y_var']} vs {results['x_var']}</b>",
+                        xaxis_title=results['x_var'],
+                        yaxis_title=results['y_var'],
+                        hovermode='closest',
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Métricas
+                    st.subheader("📊 Métricas da Regressão")
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    
+                    with col1:
+                        st.metric("R²", f"{results['r2']:.4f}")
+                    with col2:
+                        st.metric("RMSE", f"{results['rmse']:.4f}")
+                    with col3:
+                        st.metric("Coeficiente", f"{results['coefficient']:.4f}")
+                    with col4:
+                        st.metric("Intercepto", f"{results['intercept']:.4f}")
+                    with col5:
+                        st.metric("N° Amostras", results['n_samples'])
+                    
+                    # Análise de resíduos
+                    st.subheader("📉 Análise de Resíduos")
+                    
+                    col_res1, col_res2 = st.columns(2)
+                    
+                    with col_res1:
+                        # Gráfico de resíduos vs valores preditos
+                        fig_res = go.Figure()
+                        fig_res.add_trace(go.Scatter(
+                            x=results['y_pred'], 
+                            y=results['residuals'],
+                            mode='markers',
+                            marker=dict(size=8, color='purple', opacity=0.6)
+                        ))
+                        fig_res.add_hline(y=0, line_dash="dash", line_color="red", line_width=2)
+                        fig_res.update_layout(
+                            title="Resíduos vs Valores Preditos",
+                            xaxis_title="Valores Preditos",
+                            yaxis_title="Resíduos",
+                            height=400
+                        )
+                        st.plotly_chart(fig_res, use_container_width=True)
+                    
+                    with col_res2:
+                        # Histograma dos resíduos
+                        fig_hist = go.Figure()
+                        fig_hist.add_trace(go.Histogram(
+                            x=results['residuals'],
+                            nbinsx=20,
+                            marker=dict(color='green', opacity=0.7)
+                        ))
+                        fig_hist.update_layout(
+                            title="Distribuição dos Resíduos",
+                            xaxis_title="Resíduos",
+                            yaxis_title="Frequência",
+                            height=400
+                        )
+                        st.plotly_chart(fig_hist, use_container_width=True)
+                    
+                    # Interpretação
+                    st.subheader("💡 Interpretação")
+                    
+                    interpretation = f"""
+                    **Equação da Regressão:** `{results['equation']}`
+                    
+                    **Coeficiente de Determinação (R²):** {results['r2']:.4f}
+                    - O modelo explica **{results['r2']*100:.2f}%** da variabilidade em {results['y_var']}.
+                    {'- ✅ Bom ajuste (R² > 0.7)' if results['r2'] > 0.7 else '- ⚠️ Ajuste moderado (0.5 < R² < 0.7)' if results['r2'] > 0.5 else '- ❌ Ajuste fraco (R² < 0.5)'}
+                    
+                    **Interpretação do Coeficiente:**
+                    - Para cada unidade de aumento em **{results['x_var']}**, espera-se que **{results['y_var']}** {'aumente' if results['coefficient'] > 0 else 'diminua'} em **{abs(results['coefficient']):.4f}** unidades.
+                    
+                    **RMSE (Erro Médio Quadrático):** {results['rmse']:.4f}
+                    - Em média, as previsões do modelo desviam **{results['rmse']:.4f}** unidades do valor real.
+                    """
+                    
+                    st.markdown(interpretation)
+            
+            # Salvar análise
+            if save_regression:
+                results = st.session_state.get('regression_results', None)
+                if results:
+                    if save_analysis_to_db(project_name, "regression", results):
+                        st.success("✅ Análise de regressão salva com sucesso no Supabase!")
+                    else:
+                        st.error("❌ Falha ao salvar a análise.")
+                else:
+                    st.warning("⚠️ Execute a regressão antes de salvar.")
+            
+            # Exportar resultados
+            if export_regression:
+                results = st.session_state.get('regression_results', None)
+                if results:
+                    # Criar DataFrame com resultados
+                    export_df = pd.DataFrame({
+                        results['x_var']: results['x_values'],
+                        results['y_var']: results['y_values'],
+                        'Valores_Preditos': results['y_pred'],
+                        'Residuos': results['residuals']
+                    })
+                    
+                    # Adicionar métricas como metadados
+                    metrics_text = f"""
+ANÁLISE DE REGRESSÃO LINEAR
+============================
+Variável Independente (X): {results['x_var']}
+Variável Dependente (Y): {results['y_var']}
+
+EQUAÇÃO: {results['equation']}
+
+MÉTRICAS:
+- R²: {results['r2']:.4f}
+- RMSE: {results['rmse']:.4f}
+- Coeficiente: {results['coefficient']:.4f}
+- Intercepto: {results['intercept']:.4f}
+- Número de Amostras: {results['n_samples']}
+
+DADOS:
+"""
+                    
+                    csv = metrics_text + "\n" + export_df.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=csv.encode('utf-8'),
+                        file_name=f"regressao_{results['x_var']}_vs_{results['y_var']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("⚠️ Execute a regressão antes de exportar.")
+        
+        else:
+            st.warning("⚠️ São necessárias pelo menos 2 variáveis numéricas para realizar a regressão.")
+    else:
+        st.info("📊 Carregue dados primeiro para realizar análise de regressão.")
+
+
+#############################################################################################################################################################################################################################################################
 
 # ========================= TAB 5: TESTES DE HIPÓTESES =========================
 with tabs[4]:
