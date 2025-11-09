@@ -269,8 +269,8 @@ if actions_df is None or len(actions_df) == 0:
     3. Volte aqui para estabelecer controles
     """)
     
-    if st.button("🔧 Ir para Improve"):
-        st.switch_page("pages/4_🔧_Improve.py")
+    if st.button("🛠️ Ir para Improve"):
+        st.switch_page("pages/4_🛠️_Improve.py")
 else:
     st.success(f"✅ {len(actions_df)} ações implementadas encontradas")
 
