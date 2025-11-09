@@ -179,21 +179,7 @@ tab_list = [
     "📋 FMEA"
 ]
 
-# Criar tabs mantendo o estado
-selected_tab_name = st.radio(
-    "Selecione a análise:",
-    tab_list,
-    index=st.session_state.active_analyze_tab,
-    horizontal=False,
-    key="analyze_tab_selector",
-    label_visibility="visible"
-)
 
-# Atualizar índice
-st.session_state.active_analyze_tab = tab_list.index(selected_tab_name)
-
-st.divider()
-# Criar tabs
 tabs = st.tabs(tab_list)
 
 # ========================= TAB 1: ESTATÍSTICA DESCRITIVA =========================
