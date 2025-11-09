@@ -578,14 +578,19 @@ with tab1:
         st.info("💡 Nenhuma ideia cadastrada ainda. Use o formulário acima para adicionar a primeira ideia!")
 
 #####################################################################################################################################################################################################################################################################
-# ========================= TAB 2: PRIORIZAÇÃO =========================
-
 with tab2:
     st.header("📊 Priorização de Ações")
     
+    # Verificar se há um projeto selecionado
+    if 'project_id' not in st.session_state or not st.session_state.project_id:
+        st.warning("⚠️ Por favor, selecione um projeto primeiro na página inicial.")
+        st.stop()
+    
+    project_id = st.session_state.project_id
+    
     # Buscar ações priorizadas existentes
     try:
-        response = supabase.table('improvement_actions').select('*').eq('project_id', st.session_state.selected_project_id).order('priority_level', desc=False).execute()
+        response = supabase.table('improvement_actions').select('*').eq('project_id', project_id).order('priority_level', desc=False).execute()
         existing_actions = response.data if response.data else []
     except Exception as e:
         st.error(f"Erro ao carregar ações: {str(e)}")
@@ -623,9 +628,11 @@ with tab2:
             key="filter_status_prio"
         )
     with col3:
+        # Pegar lista única de responsáveis
+        responsibles = list(set([a.get('responsible', '') for a in existing_actions if a.get('responsible')]))
         filter_responsible = st.selectbox(
             "Filtrar por Responsável",
-            ["Todos"] + list(set([a.get('responsible', '') for a in existing_actions if a.get('responsible')])),
+            ["Todos"] + sorted(responsibles),
             key="filter_responsible_prio"
         )
     
@@ -644,8 +651,16 @@ with tab2:
     if filtered_actions:
         st.subheader(f"📋 Ações Priorizadas ({len(filtered_actions)})")
         
+        # Organizar por prioridade
+        priority_order = {"Alta": 1, "Média": 2, "Baixa": 3}
+        filtered_actions.sort(key=lambda x: priority_order.get(x.get('priority_level', 'Média'), 2))
+        
         for idx, action in enumerate(filtered_actions):
-            with st.expander(f"🎯 {action.get('action_title', 'Sem título')} - **{action.get('priority_level', 'N/A')}**", expanded=False):
+            # Ícone baseado na prioridade
+            priority_icon = {"Alta": "🔴", "Média": "🟡", "Baixa": "🟢"}
+            icon = priority_icon.get(action.get('priority_level', 'Média'), "⚪")
+            
+            with st.expander(f"{icon} {action.get('action_title', 'Sem título')} - **{action.get('priority_level', 'N/A')}**", expanded=False):
                 col1, col2 = st.columns([3, 1])
                 
                 with col1:
@@ -665,6 +680,7 @@ with tab2:
                         try:
                             supabase.table('improvement_actions').delete().eq('id', action['id']).execute()
                             st.success("Ação excluída!")
+                            time.sleep(1)
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erro ao excluir: {str(e)}")
@@ -714,6 +730,7 @@ with tab2:
                                     supabase.table('improvement_actions').update(update_data).eq('id', action['id']).execute()
                                     st.success("✅ Ação atualizada com sucesso!")
                                     st.session_state[f'editing_action_{action["id"]}'] = False
+                                    time.sleep(1)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Erro ao atualizar: {str(e)}")
@@ -752,7 +769,7 @@ with tab2:
                 else:
                     try:
                         new_action = {
-                            'project_id': st.session_state.selected_project_id,
+                            'project_id': project_id,
                             'action_title': action_title,
                             'description': description,
                             'priority_level': priority_level,
@@ -763,6 +780,7 @@ with tab2:
                         
                         supabase.table('improvement_actions').insert(new_action).execute()
                         st.success("✅ Ação adicionada com sucesso!")
+                        time.sleep(1)
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Erro ao adicionar ação: {str(e)}")
