@@ -2,12 +2,17 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import json
 import numpy as np
 from scipy import stats
+from scipy.stats import normaltest, shapiro, kstest, anderson
+from scipy.stats import f_oneway, kruskal, mannwhitneyu, wilcoxon
+from scipy.stats import chi2_contingency, fisher_exact
 from datetime import datetime
 import os
+import json
 from supabase import create_client, Client
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # Configuração da página
 st.set_page_config(
@@ -16,56 +21,61 @@ st.set_page_config(
     layout="wide"
 )
 
+# ========================= CONFIGURAÇÃO E FUNÇÕES =========================
+
 # Inicializar Supabase
 @st.cache_resource
 def init_supabase():
-    url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_KEY", "")
-    if url and key:
-        return create_client(url, key)
-    return None
+    try:
+        if "supabase" in st.secrets:
+            url = st.secrets["supabase"]["url"]
+            key = st.secrets["supabase"]["key"]
+        else:
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_KEY", "")
+        
+        if url and key:
+            return create_client(url, key)
+        return None
+    except Exception as e:
+        st.error(f"Erro ao conectar: {str(e)}")
+        return None
 
 supabase = init_supabase()
 
-# Função para buscar dados do Supabase
-@st.cache_data(ttl=300)  # Cache por 5 minutos
-def fetch_measurements_from_db(project_name):
-    """Busca medições do banco de dados"""
+# IMPORTANTE: Usar session_state para manter a tab selecionada
+if 'selected_tab' not in st.session_state:
+    st.session_state.selected_tab = 0
+
+# Funções de dados
+@st.cache_data(ttl=300)
+def fetch_process_data_from_db(project_name):
     if not supabase:
         return None
     
     try:
-        response = supabase.table('measurements').select("*").eq('project_name', project_name).execute()
-        if response.data:
-            return pd.DataFrame(response.data)
+        response = supabase.table('process_data').select("*").eq('project_name', project_name).order('uploaded_at', desc=True).limit(1).execute()
+        
+        if response.data and len(response.data) > 0:
+            data_json = response.data[0].get('data', None)
+            if data_json:
+                if isinstance(data_json, list):
+                    return pd.DataFrame(data_json)
+                elif isinstance(data_json, dict):
+                    if 'data' in data_json and 'columns' in data_json:
+                        return pd.DataFrame(data_json['data'], columns=data_json['columns'])
+                    else:
+                        return pd.DataFrame(data_json)
         return None
     except Exception as e:
         st.error(f"Erro ao buscar dados: {str(e)}")
         return None
 
-@st.cache_data(ttl=300)
-def fetch_process_data_from_db(project_name):
-    """Busca dados do processo do banco de dados"""
-    if not supabase:
-        return None
-    
-    try:
-        response = supabase.table('process_data').select("*").eq('project_name', project_name).execute()
-        if response.data:
-            return pd.DataFrame(response.data)
-        return None
-    except Exception as e:
-        st.error(f"Erro ao buscar dados do processo: {str(e)}")
-        return None
-
-# Função para salvar análises no Supabase
-def save_analysis_to_db(project_name, analysis_type, results):
-    """Salva resultados da análise no banco de dados com conversão adequada"""
+def save_analysis_to_db(project_name, analysis_type, results, analysis_subtype=None):
     if not supabase:
         return False
     
     try:
-        # Função auxiliar para converter tipos NumPy/Pandas para tipos Python nativos
         def convert_to_serializable(obj):
             if isinstance(obj, np.integer):
                 return int(obj)
@@ -81,1025 +91,1002 @@ def save_analysis_to_db(project_name, analysis_type, results):
                 return {key: convert_to_serializable(value) for key, value in obj.items()}
             elif isinstance(obj, list):
                 return [convert_to_serializable(item) for item in obj]
-            elif isinstance(obj, (np.bool_, bool)):
-                return bool(obj)
             elif pd.isna(obj):
                 return None
             else:
                 return obj
         
-        # Converter os resultados
         serializable_results = convert_to_serializable(results)
         
-        # Preparar dados para inserção
+        # Salvar na tabela principal
         data = {
             'project_name': project_name,
             'analysis_type': analysis_type,
-            'results': serializable_results,  # JSONB field
+            'results': serializable_results,
             'created_at': datetime.now().isoformat()
         }
         
         response = supabase.table('analyses').insert(data).execute()
+        
+        # Salvar também na tabela de análises estatísticas se for o caso
+        if analysis_subtype:
+            stat_data = {
+                'project_name': project_name,
+                'analysis_type': analysis_type,
+                'analysis_subtype': analysis_subtype,
+                'results': serializable_results,
+                'created_at': datetime.now().isoformat()
+            }
+            supabase.table('statistical_analyses').insert(stat_data).execute()
+        
         return True
         
     except Exception as e:
-        st.error(f"Erro ao salvar análise: {str(e)}")
-        # Debug - mostrar tipo do objeto problemático
-        if "not JSON serializable" in str(e):
-            st.error("Problema com serialização JSON. Verificando tipos de dados...")
-            with st.expander("Debug - Ver dados"):
-                st.write("Tipo do objeto:", type(results))
-                if isinstance(results, dict):
-                    for key, value in results.items():
-                        st.write(f"{key}: {type(value)}")
+        st.error(f"Erro ao salvar: {str(e)}")
         return False
 
-# Título e descrição
-st.title("📊 Analyze — Análise Estatística e Identificação de Causas")
+# ========================= INTERFACE PRINCIPAL =========================
 
-# Verificar projeto selecionado
+st.title("📊 Analyze — Análise Estatística Completa")
+
+# Verificar projeto
 if 'project_name' not in st.session_state:
-    st.warning("⚠️ Nenhum projeto selecionado. Por favor, defina um projeto na página Define primeiro.")
+    st.warning("⚠️ Selecione um projeto primeiro")
     st.stop()
 
 project_name = st.session_state.project_name
-st.info(f"📁 Projeto: {project_name}")
+st.info(f"📁 Projeto: **{project_name}**")
 
-# Buscar dados do banco
-with st.spinner("Carregando dados do projeto..."):
-    measurements_df = fetch_measurements_from_db(project_name)
-    process_df = fetch_process_data_from_db(project_name)
+# Buscar dados
+with st.spinner("Carregando dados..."):
+    data = fetch_process_data_from_db(project_name)
 
-# Verificar se há dados disponíveis
-if measurements_df is None and process_df is None:
-    st.warning("⚠️ Nenhum dataset carregado para análise")
-    st.info("Vá para a página Measure e carregue um dataset primeiro.")
+if data is None:
+    st.warning("⚠️ Nenhum dado encontrado. Faça upload primeiro.")
+    uploaded_file = st.file_uploader("Upload CSV", type=['csv'])
     
-    # Opção de upload direto
-    st.subheader("Ou faça upload de dados aqui:")
-    uploaded_file = st.file_uploader("Escolha um arquivo CSV", type=['csv'])
-    
-    if uploaded_file is not None:
-        try:
-            data = pd.read_csv(uploaded_file)
-            
-            # Salvar no Supabase
-            if supabase:
-                for _, row in data.iterrows():
-                    record = row.to_dict()
-                    record['project_name'] = project_name
-                    record['uploaded_at'] = datetime.now().isoformat()
-                    supabase.table('process_data').insert(record).execute()
-                
-                st.success("✅ Dados salvos no banco de dados!")
-                st.rerun()
-            else:
-                # Fallback para session_state se Supabase não estiver configurado
-                st.session_state.process_data = data
-                st.success("✅ Dados carregados na sessão!")
-                st.rerun()
-                
-        except Exception as e:
-            st.error(f"Erro ao carregar arquivo: {str(e)}")
-    st.stop()
-
-# Selecionar qual dataset usar
-data = None
-if measurements_df is not None and process_df is not None:
-    data_source = st.selectbox(
-        "Selecione a fonte de dados:",
-        ["Medições (Measurements)", "Dados do Processo (Process Data)"]
-    )
-    data = measurements_df if "Medições" in data_source else process_df
-elif measurements_df is not None:
-    data = measurements_df
-    st.info("Usando dados de medições")
+    if uploaded_file:
+        data = pd.read_csv(uploaded_file)
+        if st.button("💾 Salvar no projeto"):
+            # Salvar dados
+            pass
 else:
-    data = process_df
-    st.info("Usando dados do processo")
+    st.success(f"✅ Dados carregados: {len(data)} registros")
 
-# Tabs para diferentes análises
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Ishikawa Diagram",
-    "Pareto Analysis", 
-    "Correlation Analysis",
-    "Hypothesis Testing",
-    "5 Whys Analysis"
-])
+# TABS COM SESSION STATE PARA NÃO RESETAR
+tab_list = [
+    "📊 Estatística Descritiva",
+    "📈 Pareto",
+    "🎯 Ishikawa",
+    "📉 Análise de Regressão",
+    "🔍 Testes de Hipóteses",
+    "📐 Análise de Normalidade",
+    "🔗 Correlação",
+    "📊 Box Plot & Outliers",
+    "⚙️ Análise de Capacidade",
+    "🎲 ANOVA",
+    "❓ 5 Porquês",
+    "📋 FMEA"
+]
 
-# Tab 1: Diagrama de Ishikawa
-with tab1:
-    st.header("Diagrama de Ishikawa (Espinha de Peixe)")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        problem = st.text_input("Defina o problema:", value=st.session_state.get('problem_statement', ''))
-        
-        categories = {
-            "Método": [],
-            "Máquina": [],
-            "Mão de obra": [],
-            "Material": [],
-            "Medida": [],
-            "Meio ambiente": []
-        }
-        
-        st.subheader("Adicione causas para cada categoria:")
-        
-        for category in categories:
-            with st.expander(f"📌 {category}"):
-                num_causes = st.number_input(
-                    f"Número de causas para {category}",
-                    min_value=0,
-                    max_value=5,
-                    value=1,
-                    key=f"num_{category}"
-                )
-                
-                for i in range(int(num_causes)):
-                    cause = st.text_input(
-                        f"Causa {i+1}:",
-                        key=f"{category}_cause_{i}"
-                    )
-                    if cause:
-                        categories[category].append(cause)
-        
-        if st.button("Gerar Diagrama", type="primary"):
-            fig = go.Figure()
-            
-            # Linha principal (espinha)
-            fig.add_trace(go.Scatter(
-                x=[0, 10],
-                y=[5, 5],
-                mode='lines',
-                line=dict(color='black', width=3),
-                showlegend=False
-            ))
-            
-            # Adicionar categorias e causas
-            positions = [(2, 7), (4, 7), (6, 7), (2, 3), (4, 3), (6, 3)]
-            
-            for i, (category, causes) in enumerate(categories.items()):
-                if i < len(positions):
-                    x_pos, y_pos = positions[i]
-                    
-                    # Linha da categoria
-                    fig.add_trace(go.Scatter(
-                        x=[x_pos, x_pos],
-                        y=[5, y_pos],
-                        mode='lines+text',
-                        line=dict(color='gray', width=2),
-                        text=[None, category],
-                        textposition='top center',
-                        showlegend=False
-                    ))
-                    
-                    # Adicionar causas
-                    for j, cause in enumerate(causes):
-                        cause_y = y_pos + (0.3 if y_pos > 5 else -0.3) * (j + 1)
-                        fig.add_annotation(
-                            x=x_pos,
-                            y=cause_y,
-                            text=cause,
-                            showarrow=False,
-                            font=dict(size=10)
-                        )
-            
-            # Adicionar problema
-            fig.add_annotation(
-                x=10.5,
-                y=5,
-                text=f"PROBLEMA:<br>{problem}",
-                showarrow=False,
-                font=dict(size=12, color='red'),
-                bgcolor='yellow'
-            )
-            
-            fig.update_layout(
-                title="Diagrama de Ishikawa",
-                showlegend=False,
-                xaxis=dict(showgrid=False, zeroline=False, visible=False),
-                yaxis=dict(showgrid=False, zeroline=False, visible=False),
-                height=600
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Salvar análise no banco
-            if save_analysis_to_db(project_name, "ishikawa", {"problem": problem, "categories": categories}):
-                st.success("✅ Análise salva no banco de dados!")
-    
-    with col2:
-        st.info("""
-        **Como usar o Diagrama de Ishikawa:**
-        1. Defina claramente o problema
-        2. Identifique causas potenciais em cada categoria
-        3. Use brainstorming com a equipe
-        4. Priorize as causas mais prováveis
-        5. Valide com dados
-        """)
+# Criar tabs
+tabs = st.tabs(tab_list)
 
-# Tab 2: Análise de Pareto
-with tab2:
-    st.header("Análise de Pareto")
+# ========================= TAB 1: ESTATÍSTICA DESCRITIVA =========================
+with tabs[0]:
+    st.header("📊 Estatística Descritiva Completa")
     
-    # Primeiro, tentar carregar dados do Supabase
-    data = None
-    data_source = None
-    
-    # Buscar dados salvos no projeto
-    if supabase:
-        try:
-            # Buscar dados do processo salvos
-            response = supabase.table('process_data').select("*").eq('project_name', project_name).order('uploaded_at', desc=True).limit(1).execute()
-            
-            if response.data and len(response.data) > 0:
-                st.info("📂 Dados encontrados no projeto")
-                
-                # Extrair o JSON data
-                data_json = response.data[0].get('data', None)
-                
-                if data_json:
-                    # Converter JSON para DataFrame
-                    if isinstance(data_json, list):
-                        data = pd.DataFrame(data_json)
-                        data_source = "Supabase"
-                        st.success(f"✅ Dados carregados do banco: {len(data)} registros")
-                    elif isinstance(data_json, dict):
-                        data = pd.DataFrame(data_json)
-                        data_source = "Supabase"
-                        st.success(f"✅ Dados carregados do banco")
-                    
-                    # Mostrar preview dos dados
-                    with st.expander("Ver dados carregados"):
-                        st.dataframe(data.head(), use_container_width=True)
+    if data is not None:
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
         
-        except Exception as e:
-            st.error(f"Erro ao buscar dados: {str(e)}")
-    
-    # Opção de upload se não houver dados ou usuário quiser substituir
-    st.subheader("📤 Upload de Dados")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        uploaded_file = st.file_uploader(
-            "Faça upload de um arquivo CSV (opcional - sobrescreve dados existentes)",
-            type=['csv'],
-            key="pareto_upload"
-        )
-    
-    with col2:
-        if data is not None:
-            st.metric("Fonte Atual", data_source)
-            st.metric("Registros", len(data))
-    
-    # Se fez upload, usar os novos dados
-    if uploaded_file is not None:
-        try:
-            new_data = pd.read_csv(uploaded_file)
-            
-            # Perguntar se quer salvar no Supabase
-            if supabase:
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("💾 Salvar no projeto", type="primary"):
-                        # Salvar no process_data
-                        data_json = new_data.to_dict('records')
-                        record = {
-                            'project_name': project_name,
-                            'data': data_json,
-                            'data_type': 'pareto_analysis',
-                            'collection_date': datetime.now().date().isoformat(),
-                            'uploaded_at': datetime.now().isoformat()
-                        }
-                        
-                        try:
-                            response = supabase.table('process_data').insert(record).execute()
-                            st.success("✅ Dados salvos no projeto!")
-                            data = new_data
-                            data_source = "Upload + Supabase"
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao salvar: {str(e)}")
-                
-                with col2:
-                    if st.button("📊 Usar sem salvar"):
-                        data = new_data
-                        data_source = "Upload temporário"
-            else:
-                data = new_data
-                data_source = "Upload local"
-                
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo: {str(e)}")
-    
-    # Análise de Pareto se houver dados
-    if data is not None and len(data.columns) > 0:
-        st.divider()
-        st.subheader("📊 Configurar Análise de Pareto")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Seleção de colunas
-            category_col = st.selectbox(
-                "Selecione a coluna de categorias:",
-                data.columns,
-                key="pareto_category"
-            )
-            
-            value_col = st.selectbox(
-                "Selecione a coluna de valores (ou use Contagem):",
-                ["Contagem"] + list(data.columns),
-                index=0,
-                key="pareto_value"
-            )
-            
-            # Filtros opcionais
-            with st.expander("⚙️ Filtros Avançados"):
-                # Permitir filtrar dados antes da análise
-                filter_col = st.selectbox(
-                    "Filtrar por coluna (opcional):",
-                    ["Nenhum"] + list(data.columns)
-                )
-                
-                if filter_col != "Nenhum" and filter_col in data.columns:
-                    unique_vals = data[filter_col].unique()
-                    selected_vals = st.multiselect(
-                        f"Valores de {filter_col}:",
-                        unique_vals,
-                        default=unique_vals[:5] if len(unique_vals) > 5 else unique_vals
-                    )
-                    if selected_vals:
-                        data = data[data[filter_col].isin(selected_vals)]
-                        st.info(f"Dados filtrados: {len(data)} registros")
-        
-        with col2:
-            st.info("""
-            **📚 Princípio de Pareto:**
-            - 80% dos efeitos vêm de 20% das causas
-            - Identifica os "poucos vitais"
-            - Prioriza ações de melhoria
-            
-            **Como usar:**
-            1. Selecione a categoria a analisar
-            2. Escolha o valor ou use contagem
-            3. Analise o gráfico gerado
-            """)
-        
-        # Botão para gerar análise
-        if st.button("🎯 Gerar Análise de Pareto", type="primary", use_container_width=True):
-            
-            # Preparar dados para Pareto
-            if value_col == "Contagem":
-                pareto_data = data[category_col].value_counts().reset_index()
-                pareto_data.columns = ['Categoria', 'Frequência']
-                value_column = 'Frequência'
-            else:
-                pareto_data = data.groupby(category_col)[value_col].sum().reset_index()
-                pareto_data.columns = ['Categoria', 'Valor']
-                value_column = 'Valor'
-            
-            # Ordenar por valor decrescente
-            pareto_data = pareto_data.sort_values(by=value_column, ascending=False)
-            
-            # Calcular percentual e acumulado
-            total = pareto_data[value_column].sum()
-            pareto_data['Percentual'] = (pareto_data[value_column] / total) * 100
-            pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
-            
-            # Identificar os "vital few" (80%)
-            vital_few_index = (pareto_data['Acumulado'] <= 80).sum()
-            if vital_few_index == 0:
-                vital_few_index = 1
-            
-            # Criar gráfico de Pareto
-            fig = go.Figure()
-            
-            # Barras
-            colors = ['red' if i < vital_few_index else 'lightblue' 
-                     for i in range(len(pareto_data))]
-            
-            fig.add_trace(go.Bar(
-                x=pareto_data['Categoria'],
-                y=pareto_data[value_column],
-                name=value_column,
-                marker_color=colors,
-                yaxis='y',
-                text=pareto_data[value_column],
-                texttemplate='%{text:.0f}',
-                textposition='outside'
-            ))
-            
-            # Linha acumulada
-            fig.add_trace(go.Scatter(
-                x=pareto_data['Categoria'],
-                y=pareto_data['Acumulado'],
-                name='% Acumulado',
-                mode='lines+markers+text',
-                line=dict(color='darkgreen', width=2),
-                marker=dict(size=8),
-                yaxis='y2',
-                text=pareto_data['Acumulado'].round(1),
-                texttemplate='%{text:.1f}%',
-                textposition='top center'
-            ))
-            
-            # Linha de referência 80%
-            fig.add_hline(
-                y=80,
-                line_dash="dash",
-                line_color="orange",
-                line_width=2,
-                annotation_text="80% (Vital Few)",
-                annotation_position="right",
-                yref='y2'
-            )
-            
-            # Layout
-            fig.update_layout(
-                title=f"Gráfico de Pareto - {category_col}",
-                xaxis=dict(
-                    title="Categorias",
-                    tickangle=-45
-                ),
-                yaxis=dict(
-                    title=value_column,
-                    side='left'
-                ),
-                yaxis2=dict(
-                    title="% Acumulado",
-                    overlaying='y',
-                    side='right',
-                    range=[0, 105],
-                    tickformat='.0f',
-                    ticksuffix='%'
-                ),
-                hovermode='x unified',
-                height=500,
-                showlegend=True,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                )
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Análise dos resultados
-            st.divider()
-            st.subheader("📋 Análise dos Resultados")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    "Total de Categorias",
-                    len(pareto_data)
-                )
-            
-            with col2:
-                st.metric(
-                    "Vital Few (80%)",
-                    f"{vital_few_index} categorias",
-                    f"{(vital_few_index/len(pareto_data)*100):.1f}% do total"
-                )
-            
-            with col3:
-                st.metric(
-                    "Maior Contribuidor",
-                    pareto_data.iloc[0]['Categoria'],
-                    f"{pareto_data.iloc[0]['Percentual']:.1f}%"
-                )
-            
-            # Tabela com os Vital Few
-            st.subheader("🎯 Categorias Prioritárias (Vital Few)")
-            vital_few_data = pareto_data.iloc[:vital_few_index].copy()
-            vital_few_data['Percentual'] = vital_few_data['Percentual'].round(2)
-            vital_few_data['Acumulado'] = vital_few_data['Acumulado'].round(2)
-            
-            st.dataframe(
-                vital_few_data,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Categoria": st.column_config.TextColumn("Categoria", width="medium"),
-                    value_column: st.column_config.NumberColumn(value_column, format="%.0f"),
-                    "Percentual": st.column_config.NumberColumn("% Individual", format="%.2f%%"),
-                    "Acumulado": st.column_config.NumberColumn("% Acumulado", format="%.2f%%")
-                }
-            )
-            
-            # Recomendações
-            st.subheader("💡 Recomendações")
-            st.success(f"""
-            **Foque nas {vital_few_index} categorias principais:**
-            - Elas representam {vital_few_data['Acumulado'].iloc[-1]:.1f}% do problema
-            - Priorize ações de melhoria nestas categorias
-            - Maior impacto com menor esforço
-            """)
-            
-            # Salvar análise no banco
-            if save_analysis_to_db(project_name, "pareto", {
-                "data": pareto_data.to_dict(),
-                "vital_few": vital_few_index,
-                "category_column": category_col,
-                "value_column": value_col,
-                "timestamp": datetime.now().isoformat()
-            }):
-                st.success("✅ Análise salva no banco de dados!")
-            
-            # Opção de download
-            csv = pareto_data.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Análise CSV",
-                data=csv,
-                file_name=f"pareto_{project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-    
-    elif data is None:
-        st.warning("⚠️ Nenhum dado disponível para análise")
-        st.info("""
-        **Para realizar a análise de Pareto:**
-        1. Faça upload de um arquivo CSV com seus dados, ou
-        2. Carregue dados salvos anteriormente na fase Measure
-        """)
-        
-        # Botão para ir para a página Measure
-        if st.button("📏 Ir para página Measure"):
-            st.switch_page("pages/2_📏_Measure.py")
-
-
-# Tab 3: Análise de Correlação
-with tab3:
-    st.header("Análise de Correlação")
-    
-    numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-    
-    if len(numeric_cols) >= 2:
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Matriz de correlação
-            st.subheader("Matriz de Correlação")
-            
+        if numeric_cols:
             selected_cols = st.multiselect(
                 "Selecione as variáveis para análise:",
                 numeric_cols,
-                default=numeric_cols[:5] if len(numeric_cols) > 5 else numeric_cols
+                default=numeric_cols[:3] if len(numeric_cols) > 3 else numeric_cols,
+                key="desc_stats_cols"
             )
             
-            if len(selected_cols) >= 2:
-                corr_matrix = data[selected_cols].corr()
+            if selected_cols:
+                # Estatísticas básicas
+                st.subheader("📈 Medidas de Tendência Central e Dispersão")
                 
-                fig = px.imshow(
-                    corr_matrix,
-                    labels=dict(x="Variáveis", y="Variáveis", color="Correlação"),
-                    x=selected_cols,
-                    y=selected_cols,
-                    color_continuous_scale='RdBu',
-                    zmin=-1,
-                    zmax=1
+                stats_df = pd.DataFrame()
+                for col in selected_cols:
+                    stats_dict = {
+                        'Variável': col,
+                        'Contagem': data[col].count(),
+                        'Média': data[col].mean(),
+                        'Mediana': data[col].median(),
+                        'Moda': data[col].mode()[0] if not data[col].mode().empty else np.nan,
+                        'Desvio Padrão': data[col].std(),
+                        'Variância': data[col].var(),
+                        'Mínimo': data[col].min(),
+                        'Q1 (25%)': data[col].quantile(0.25),
+                        'Q2 (50%)': data[col].quantile(0.50),
+                        'Q3 (75%)': data[col].quantile(0.75),
+                        'Máximo': data[col].max(),
+                        'Amplitude': data[col].max() - data[col].min(),
+                        'IQR': data[col].quantile(0.75) - data[col].quantile(0.25),
+                        'CV%': (data[col].std() / data[col].mean() * 100) if data[col].mean() != 0 else 0,
+                        'Assimetria': data[col].skew(),
+                        'Curtose': data[col].kurtosis()
+                    }
+                    stats_df = pd.concat([stats_df, pd.DataFrame([stats_dict])], ignore_index=True)
+                
+                # Formatar e exibir
+                st.dataframe(
+                    stats_df.style.format({
+                        'Contagem': '{:.0f}',
+                        'Média': '{:.3f}',
+                        'Mediana': '{:.3f}',
+                        'Moda': '{:.3f}',
+                        'Desvio Padrão': '{:.3f}',
+                        'Variância': '{:.3f}',
+                        'Mínimo': '{:.3f}',
+                        'Q1 (25%)': '{:.3f}',
+                        'Q2 (50%)': '{:.3f}',
+                        'Q3 (75%)': '{:.3f}',
+                        'Máximo': '{:.3f}',
+                        'Amplitude': '{:.3f}',
+                        'IQR': '{:.3f}',
+                        'CV%': '{:.2f}%',
+                        'Assimetria': '{:.3f}',
+                        'Curtose': '{:.3f}'
+                    }),
+                    use_container_width=True
                 )
                 
-                fig.update_layout(title="Matriz de Correlação")
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Análise de correlações fortes
-                st.subheader("Correlações Significativas")
-                threshold = st.slider("Threshold de correlação:", 0.0, 1.0, 0.7)
-                
-                strong_corr = []
-                for i in range(len(corr_matrix.columns)):
-                    for j in range(i+1, len(corr_matrix.columns)):
-                        if abs(corr_matrix.iloc[i, j]) >= threshold:
-                            strong_corr.append({
-                                'Variável 1': corr_matrix.columns[i],
-                                'Variável 2': corr_matrix.columns[j],
-                                'Correlação': round(corr_matrix.iloc[i, j], 3)
-                            })
-                
-                if strong_corr:
-                    st.dataframe(pd.DataFrame(strong_corr))
-                else:
-                    st.info(f"Nenhuma correlação acima de {threshold}")
-                
-                # Scatter plot
-                st.subheader("Gráfico de Dispersão")
-                x_var = st.selectbox("Variável X:", selected_cols)
-                y_var = st.selectbox("Variável Y:", [c for c in selected_cols if c != x_var])
-                
-                if x_var and y_var:
-                    fig = px.scatter(
-                        data,
-                        x=x_var,
-                        y=y_var,
-                        trendline="ols",
-                        title=f"Correlação: {x_var} vs {y_var}"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Calcular R²
-                    correlation = data[x_var].corr(data[y_var])
-                    r_squared = correlation ** 2
-                    st.metric("R²", f"{r_squared:.3f}")
-                    st.metric("Correlação", f"{correlation:.3f}")
+                # Interpretação
+                st.subheader("💡 Interpretação")
+                for _, row in stats_df.iterrows():
+                    with st.expander(f"Análise de {row['Variável']}"):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Assimetria
+                            if abs(row['Assimetria']) < 0.5:
+                                st.success(f"✅ Distribuição aproximadamente simétrica ({row['Assimetria']:.3f})")
+                            elif row['Assimetria'] > 0.5:
+                                st.warning(f"⚠️ Assimetria positiva (cauda à direita) ({row['Assimetria']:.3f})")
+                            else:
+                                st.warning(f"⚠️ Assimetria negativa (cauda à esquerda) ({row['Assimetria']:.3f})")
+                        
+                        with col2:
+                            # Curtose
+                            if abs(row['Curtose']) < 0.5:
+                                st.success(f"✅ Curtose normal (mesocúrtica) ({row['Curtose']:.3f})")
+                            elif row['Curtose'] > 0.5:
+                                st.info(f"📊 Distribuição leptocúrtica (pico alto) ({row['Curtose']:.3f})")
+                            else:
+                                st.info(f"📊 Distribuição platicúrtica (achatada) ({row['Curtose']:.3f})")
+                        
+                        # CV
+                        if row['CV%'] < 15:
+                            st.success(f"✅ Baixa variabilidade (CV = {row['CV%']:.2f}%)")
+                        elif row['CV%'] < 30:
+                            st.warning(f"⚠️ Variabilidade moderada (CV = {row['CV%']:.2f}%)")
+                        else:
+                            st.error(f"❌ Alta variabilidade (CV = {row['CV%']:.2f}%)")
                 
                 # Salvar análise
-                if st.button("Salvar Análise de Correlação"):
-                    save_analysis_to_db(project_name, "correlation", {
-                        "correlation_matrix": corr_matrix.to_dict(),
-                        "strong_correlations": strong_corr
-                    })
-                    st.success("✅ Análise salva!")
-        
-        with col2:
-            st.info("""
-            **Interpretação de Correlação:**
-            - **1.0**: Correlação positiva perfeita
-            - **0.7 a 0.9**: Correlação forte
-            - **0.4 a 0.6**: Correlação moderada
-            - **0.1 a 0.3**: Correlação fraca
-            - **0**: Sem correlação
-            - **-1.0**: Correlação negativa perfeita
-            """)
-    else:
-        st.warning("É necessário pelo menos 2 variáveis numéricas para análise de correlação")
+                if st.button("💾 Salvar Estatísticas Descritivas", key="save_desc_stats"):
+                    if save_analysis_to_db(project_name, "descriptive_statistics", stats_df.to_dict(), "full_descriptive"):
+                        st.success("✅ Análise salva!")
 
-# Tab 4: Testes de Hipótese
-with tab4:
-    st.header("Testes de Hipótese")
+# ========================= TAB 2: PARETO (CORRIGIDO) =========================
+with tabs[1]:
+    st.header("📈 Análise de Pareto")
+    
+    if data is not None and len(data.columns) > 0:
+        # Usar container para evitar reset
+        pareto_container = st.container()
+        
+        with pareto_container:
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                # Use keys únicos e session_state
+                if 'pareto_category' not in st.session_state:
+                    st.session_state.pareto_category = data.columns[0]
+                
+                category_col = st.selectbox(
+                    "Coluna de categorias:",
+                    data.columns,
+                    index=list(data.columns).index(st.session_state.pareto_category) if st.session_state.pareto_category in data.columns else 0,
+                    key="pareto_cat_select"
+                )
+                st.session_state.pareto_category = category_col
+                
+                value_col = st.selectbox(
+                    "Coluna de valores:",
+                    ["Contagem"] + list(data.columns),
+                    key="pareto_val_select"
+                )
+            
+            with col2:
+                st.info("""
+                **Princípio 80/20:**
+                80% dos efeitos vêm de 20% das causas
+                """)
+            
+            # Botão para gerar
+            if st.button("🎯 Gerar Pareto", type="primary", key="gen_pareto"):
+                # Processar dados
+                if value_col == "Contagem":
+                    pareto_data = data[category_col].value_counts().reset_index()
+                    pareto_data.columns = ['Categoria', 'Frequência']
+                    value_column = 'Frequência'
+                else:
+                    pareto_data = data.groupby(category_col)[value_col].sum().reset_index()
+                    pareto_data.columns = ['Categoria', 'Valor']
+                    value_column = 'Valor'
+                
+                pareto_data = pareto_data.sort_values(by=value_column, ascending=False)
+                total = pareto_data[value_column].sum()
+                pareto_data['Percentual'] = (pareto_data[value_column] / total) * 100
+                pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
+                
+                # Vital Few
+                vital_few = pareto_data[pareto_data['Acumulado'] <= 80]
+                
+                # Gráfico
+                fig = go.Figure()
+                
+                # Barras com cores diferentes para vital few
+                colors = ['red' if i < len(vital_few) else 'lightblue' for i in range(len(pareto_data))]
+                
+                fig.add_trace(go.Bar(
+                    x=pareto_data['Categoria'],
+                    y=pareto_data[value_column],
+                    name=value_column,
+                    marker_color=colors,
+                    yaxis='y',
+                    text=pareto_data[value_column],
+                    textposition='outside'
+                ))
+                
+                # Linha acumulada
+                fig.add_trace(go.Scatter(
+                    x=pareto_data['Categoria'],
+                    y=pareto_data['Acumulado'],
+                    name='% Acumulado',
+                    mode='lines+markers',
+                    line=dict(color='green', width=2),
+                    marker=dict(size=8),
+                    yaxis='y2'
+                ))
+                
+                # Linha 80%
+                fig.add_hline(y=80, line_dash="dash", line_color="orange",
+                            annotation_text="80%", yref='y2')
+                
+                fig.update_layout(
+                    title=f"Pareto: {category_col}",
+                    yaxis=dict(title=value_column, side='left'),
+                    yaxis2=dict(title='% Acumulado', overlaying='y', side='right', range=[0, 105]),
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Resultados
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total de Categorias", len(pareto_data))
+                with col2:
+                    st.metric("Vital Few", len(vital_few))
+                with col3:
+                    st.metric("% dos Vital Few", f"{(len(vital_few)/len(pareto_data)*100):.1f}%")
+                
+                # Tabela
+                st.subheader("📊 Detalhamento")
+                st.dataframe(pareto_data, use_container_width=True, hide_index=True)
+                
+                # Salvar
+                if st.button("💾 Salvar Análise Pareto", key="save_pareto"):
+                    save_analysis_to_db(project_name, "pareto", pareto_data.to_dict(), "pareto_analysis")
+                    st.success("✅ Salvo!")
+
+# ========================= TAB 3: ISHIKAWA =========================
+with tabs[2]:
+    st.header("🎯 Diagrama de Ishikawa (Espinha de Peixe)")
+    
+    problem = st.text_input("Problema:", value=st.session_state.get('problem_statement', ''))
+    
+    categories = {
+        "Método": [],
+        "Máquina": [],
+        "Mão de obra": [],
+        "Material": [],
+        "Medida": [],
+        "Meio ambiente": []
+    }
+    
+    cols = st.columns(3)
+    for i, category in enumerate(categories.keys()):
+        with cols[i % 3]:
+            with st.expander(f"📌 {category}"):
+                for j in range(3):
+                    cause = st.text_input(f"Causa {j+1}:", key=f"ish_{category}_{j}")
+                    if cause:
+                        categories[category].append(cause)
+    
+    if st.button("Gerar Diagrama", key="gen_ishikawa"):
+        # Criar diagrama
+        fig = go.Figure()
+        
+        # Espinha principal
+        fig.add_trace(go.Scatter(x=[0, 10], y=[5, 5], mode='lines',
+                                line=dict(color='black', width=3)))
+        
+        # Categorias
+        positions = [(2, 7), (4, 7), (6, 7), (2, 3), (4, 3), (6, 3)]
+        
+        for i, (category, causes) in enumerate(categories.items()):
+            if i < len(positions):
+                x, y = positions[i]
+                
+                # Linha da categoria
+                fig.add_trace(go.Scatter(x=[x, x], y=[5, y], mode='lines+text',
+                                       line=dict(color='gray', width=2),
+                                       text=[None, category],
+                                       textposition='top center'))
+                
+                # Causas
+                for j, cause in enumerate(causes):
+                    fig.add_annotation(x=x, y=y + (0.3 if y > 5 else -0.3) * (j + 1),
+                                     text=cause, showarrow=False, font=dict(size=10))
+        
+        # Problema
+        fig.add_annotation(x=10.5, y=5, text=f"PROBLEMA:<br>{problem}",
+                         showarrow=False, font=dict(size=12, color='red'),
+                         bgcolor='yellow')
+        
+        fig.update_layout(title="Diagrama de Ishikawa", showlegend=False,
+                        xaxis=dict(visible=False), yaxis=dict(visible=False),
+                        height=600)
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+# ========================= TAB 4: REGRESSÃO =========================
+with tabs[3]:
+    st.header("📉 Análise de Regressão")
+    
+    if data is not None:
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) >= 2:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                x_var = st.selectbox("Variável Independente (X):", numeric_cols, key="reg_x")
+            with col2:
+                y_var = st.selectbox("Variável Dependente (Y):", 
+                                   [c for c in numeric_cols if c != x_var], key="reg_y")
+            
+            if st.button("Executar Regressão", key="run_regression"):
+                from sklearn.linear_model import LinearRegression
+                from sklearn.metrics import r2_score, mean_squared_error
+                
+                # Preparar dados
+                X = data[[x_var]].dropna()
+                y = data[y_var].dropna()
+                
+                # Alinhar índices
+                common_idx = X.index.intersection(y.index)
+                X = X.loc[common_idx]
+                y = y.loc[common_idx]
+                
+                # Regressão
+                model = LinearRegression()
+                model.fit(X, y)
+                y_pred = model.predict(X)
+                
+                # Métricas
+                r2 = r2_score(y, y_pred)
+                rmse = np.sqrt(mean_squared_error(y, y_pred))
+                
+                # Gráfico
+                fig = px.scatter(x=X.iloc[:, 0], y=y, labels={'x': x_var, 'y': y_var})
+                fig.add_trace(go.Scatter(x=X.iloc[:, 0], y=y_pred, mode='lines',
+                                        name='Regressão', line=dict(color='red')))
+                
+                # Equação
+                equation = f"y = {model.coef_[0]:.3f}x + {model.intercept_:.3f}"
+                fig.add_annotation(x=X.iloc[:, 0].max(), y=y.max(),
+                                 text=f"{equation}<br>R² = {r2:.3f}",
+                                 showarrow=False, bgcolor='white')
+                
+                fig.update_layout(title=f"Regressão Linear: {y_var} vs {x_var}")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Métricas
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("R²", f"{r2:.4f}")
+                with col2:
+                    st.metric("RMSE", f"{rmse:.4f}")
+                with col3:
+                    st.metric("Coeficiente", f"{model.coef_[0]:.4f}")
+                with col4:
+                    st.metric("Intercepto", f"{model.intercept_:.4f}")
+                
+                # Análise de resíduos
+                residuals = y - y_pred
+                
+                fig_res = go.Figure()
+                fig_res.add_trace(go.Scatter(x=y_pred, y=residuals, mode='markers'))
+                fig_res.add_hline(y=0, line_dash="dash", line_color="red")
+                fig_res.update_layout(title="Gráfico de Resíduos",
+                                     xaxis_title="Valores Preditos",
+                                     yaxis_title="Resíduos")
+                st.plotly_chart(fig_res, use_container_width=True)
+
+# ========================= TAB 5: TESTES DE HIPÓTESES =========================
+with tabs[4]:
+    st.header("🔍 Testes de Hipóteses")
     
     test_type = st.selectbox(
-        "Selecione o tipo de teste:",
-        ["Teste t (2 amostras)", "ANOVA (múltiplas amostras)", "Teste de Normalidade", "Teste Qui-Quadrado"]
+        "Tipo de Teste:",
+        ["Teste t (1 amostra)", "Teste t (2 amostras)", "Teste t pareado",
+         "Mann-Whitney U", "Wilcoxon", "Qui-Quadrado", "Fisher Exact"]
     )
     
-    if test_type == "Teste t (2 amostras)":
-        st.subheader("Teste t de Student")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
+    if data is not None:
+        if "Teste t (2 amostras)" in test_type:
             numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-            if numeric_cols:
-                value_col = st.selectbox("Variável de interesse:", numeric_cols)
+            categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
+            
+            if numeric_cols and categorical_cols:
+                value_col = st.selectbox("Variável numérica:", numeric_cols)
+                group_col = st.selectbox("Variável de grupo:", categorical_cols)
                 
-                categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
-                if categorical_cols:
-                    group_col = st.selectbox("Variável de agrupamento:", categorical_cols)
+                groups = data[group_col].unique()
+                if len(groups) >= 2:
+                    group1 = st.selectbox("Grupo 1:", groups)
+                    group2 = st.selectbox("Grupo 2:", [g for g in groups if g != group1])
                     
-                    unique_groups = data[group_col].unique()
-                    if len(unique_groups) >= 2:
-                        group1 = st.selectbox("Grupo 1:", unique_groups)
-                        group2 = st.selectbox("Grupo 2:", [g for g in unique_groups if g != group1])
+                    alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05)
+                    
+                    if st.button("Executar Teste"):
+                        data1 = data[data[group_col] == group1][value_col].dropna()
+                        data2 = data[data[group_col] == group2][value_col].dropna()
                         
-                        alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05)
+                        # Teste t
+                        t_stat, p_value = stats.ttest_ind(data1, data2)
                         
-                        if st.button("Executar Teste t", type="primary"):
-                            # Preparar dados
-                            data1 = data[data[group_col] == group1][value_col].dropna()
-                            data2 = data[data[group_col] == group2][value_col].dropna()
-                            
-                            # Executar teste
-                            t_stat, p_value = stats.ttest_ind(data1, data2)
-                            
-                            # Resultados
-                            st.write("### Resultados do Teste t")
-                            col_res1, col_res2 = st.columns(2)
-                            
-                            with col_res1:
-                                st.metric("Estatística t", f"{t_stat:.4f}")
-                                st.metric("Valor p", f"{p_value:.4f}")
-                            
-                            with col_res2:
-                                st.metric(f"Média {group1}", f"{data1.mean():.2f}")
-                                st.metric(f"Média {group2}", f"{data2.mean():.2f}")
+                        # Teste de Levene para homogeneidade de variâncias
+                        levene_stat, levene_p = stats.levene(data1, data2)
+                        
+                        # Resultados
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.metric("Estatística t", f"{t_stat:.4f}")
+                            st.metric("Valor p", f"{p_value:.4f}")
+                            st.metric("Média Grupo 1", f"{data1.mean():.3f}")
+                            st.metric("Média Grupo 2", f"{data2.mean():.3f}")
+                        
+                        with col2:
+                            st.metric("Diferença de Médias", f"{data1.mean() - data2.mean():.3f}")
+                            st.metric("Teste de Levene p-value", f"{levene_p:.4f}")
                             
                             # Interpretação
                             if p_value < alpha:
-                                st.error(f"""
-                                **Rejeitar H₀**: Existe diferença significativa entre os grupos 
-                                (p-value = {p_value:.4f} < α = {alpha})
-                                """)
+                                st.error(f"Rejeitar H₀: Existe diferença significativa (p={p_value:.4f} < α={alpha})")
                             else:
-                                st.success(f"""
-                                **Não rejeitar H₀**: Não há diferença significativa entre os grupos
-                                (p-value = {p_value:.4f} ≥ α = {alpha})
-                                """)
-                            
-                            # Visualização
-                            fig = go.Figure()
-                            fig.add_trace(go.Box(y=data1, name=group1))
-                            fig.add_trace(go.Box(y=data2, name=group2))
-                            fig.update_layout(title=f"Comparação: {group1} vs {group2}")
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Salvar resultado
-                            save_analysis_to_db(project_name, "t_test", {
-                                "groups": [group1, group2],
-                                "t_statistic": t_stat,
-                                "p_value": p_value,
-                                "alpha": alpha,
-                                "conclusion": "reject" if p_value < alpha else "fail_to_reject"
-                            })
-        
-        with col2:
-            st.info("""
-            **Teste t de Student:**
-            - **H₀**: As médias dos grupos são iguais
-            - **H₁**: As médias dos grupos são diferentes
-            - **Premissas**:
-                - Dados normalmente distribuídos
-                - Variâncias homogêneas
-                - Amostras independentes
-            """)
+                                st.success(f"Não rejeitar H₀: Não há diferença significativa (p={p_value:.4f} ≥ α={alpha})")
+                        
+                        # Visualização
+                        fig = go.Figure()
+                        fig.add_trace(go.Box(y=data1, name=group1))
+                        fig.add_trace(go.Box(y=data2, name=group2))
+                        fig.update_layout(title=f"Comparação: {group1} vs {group2}")
+                        st.plotly_chart(fig, use_container_width=True)
+
+# ========================= TAB 6: NORMALIDADE =========================
+with tabs[5]:
+    st.header("📐 Testes de Normalidade")
     
-    elif test_type == "ANOVA (múltiplas amostras)":
-        st.subheader("Análise de Variância (ANOVA)")
-        
+    if data is not None:
         numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-        if numeric_cols:
-            value_col = st.selectbox("Variável dependente:", numeric_cols)
-            
-            categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
-            if categorical_cols:
-                group_col = st.selectbox("Fator (variável categórica):", categorical_cols)
-                
-                if st.button("Executar ANOVA", type="primary"):
-                    # Preparar dados
-                    groups = []
-                    labels = []
-                    for group in data[group_col].unique():
-                        group_data = data[data[group_col] == group][value_col].dropna()
-                        if len(group_data) > 0:
-                            groups.append(group_data)
-                            labels.append(group)
-                    
-                    # Executar ANOVA
-                    f_stat, p_value = stats.f_oneway(*groups)
-                    
-                    # Resultados
-                    st.write("### Resultados da ANOVA")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.metric("Estatística F", f"{f_stat:.4f}")
-                        st.metric("Valor p", f"{p_value:.4f}")
-                    
-                    alpha = 0.05
-                    if p_value < alpha:
-                        st.error(f"""
-                        **Rejeitar H₀**: Existe diferença significativa entre pelo menos um par de grupos
-                        (p-value = {p_value:.4f} < α = {alpha})
-                        """)
-                    else:
-                        st.success(f"""
-                        **Não rejeitar H₀**: Não há diferença significativa entre os grupos
-                        (p-value = {p_value:.4f} ≥ α = {alpha})
-                        """)
-                    
-                    # Visualização
-                    fig = go.Figure()
-                    for group_data, label in zip(groups, labels):
-                        fig.add_trace(go.Box(y=group_data, name=label))
-                    fig.update_layout(title=f"ANOVA: {value_col} por {group_col}")
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Tabela de médias
-                    summary = data.groupby(group_col)[value_col].agg(['mean', 'std', 'count'])
-                    st.write("### Resumo por Grupo")
-                    st.dataframe(summary)
-                    
-                    # Salvar resultado
-                    save_analysis_to_db(project_name, "anova", {
-                        "f_statistic": f_stat,
-                        "p_value": p_value,
-                        "groups": labels,
-                        "summary": summary.to_dict()
-                    })
-    
-    elif test_type == "Teste de Normalidade":
-        st.subheader("Teste de Normalidade (Shapiro-Wilk)")
         
-        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
         if numeric_cols:
-            test_col = st.selectbox("Selecione a variável:", numeric_cols)
+            selected_col = st.selectbox("Selecione a variável:", numeric_cols, key="norm_col")
             
-            if st.button("Executar Teste", type="primary"):
-                # Preparar dados
-                test_data = data[test_col].dropna()
+            if st.button("Executar Testes de Normalidade", key="run_normality"):
+                test_data = data[selected_col].dropna()
                 
-                # Executar teste
-                stat, p_value = stats.shapiro(test_data)
+                # Múltiplos testes
+                tests_results = {}
                 
-                # Resultados
-                st.write("### Resultados do Teste de Normalidade")
+                # Shapiro-Wilk
+                if len(test_data) <= 5000:
+                    stat_sw, p_sw = shapiro(test_data)
+                    tests_results['Shapiro-Wilk'] = {'statistic': stat_sw, 'p_value': p_sw}
+                
+                # Kolmogorov-Smirnov
+                stat_ks, p_ks = kstest(test_data, 'norm', args=(test_data.mean(), test_data.std()))
+                tests_results['Kolmogorov-Smirnov'] = {'statistic': stat_ks, 'p_value': p_ks}
+                
+                # Anderson-Darling
+                result_ad = anderson(test_data, dist='norm')
+                tests_results['Anderson-Darling'] = {
+                    'statistic': result_ad.statistic,
+                    'critical_values': dict(zip(result_ad.significance_level, result_ad.critical_values))
+                }
+                
+                # D'Agostino-Pearson
+                stat_dp, p_dp = normaltest(test_data)
+                tests_results["D'Agostino-Pearson"] = {'statistic': stat_dp, 'p_value': p_dp}
+                
+                # Exibir resultados
+                st.subheader("📊 Resultados dos Testes")
+                
+                for test_name, results in tests_results.items():
+                    with st.expander(f"{test_name}"):
+                        if 'p_value' in results:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Estatística", f"{results['statistic']:.4f}")
+                            with col2:
+                                st.metric("Valor p", f"{results['p_value']:.4f}")
+                            
+                            if results['p_value'] > 0.05:
+                                st.success("✅ Dados seguem distribuição normal (p > 0.05)")
+                            else:
+                                st.warning("⚠️ Dados NÃO seguem distribuição normal (p ≤ 0.05)")
+                        else:
+                            st.write(f"Estatística: {results['statistic']:.4f}")
+                            st.write("Valores Críticos:", results['critical_values'])
+                
+                # Visualizações
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.metric("Estatística W", f"{stat:.4f}")
-                    st.metric("Valor p", f"{p_value:.4f}")
+                    # Histograma com curva normal
+                    fig = go.Figure()
+                    fig.add_trace(go.Histogram(x=test_data, nbinsx=30, name='Dados',
+                                              histnorm='probability density'))
+                    
+                    # Curva normal teórica
+                    x_range = np.linspace(test_data.min(), test_data.max(), 100)
+                    y_normal = stats.norm.pdf(x_range, test_data.mean(), test_data.std())
+                    fig.add_trace(go.Scatter(x=x_range, y=y_normal, mode='lines',
+                                            name='Normal Teórica', line=dict(color='red')))
+                    
+                    fig.update_layout(title="Histograma vs Normal")
+                    st.plotly_chart(fig, use_container_width=True)
                 
-                alpha = 0.05
-                if p_value > alpha:
-                    st.success(f"""
-                    **Dados seguem distribuição normal**
-                    (p-value = {p_value:.4f} > α = {alpha})
-                    """)
-                else:
-                    st.warning(f"""
-                    **Dados NÃO seguem distribuição normal**
-                    (p-value = {p_value:.4f} ≤ α = {alpha})
-                    """)
+                with col2:
+                    # Q-Q Plot
+                    theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, len(test_data)))
+                    sample_quantiles = np.sort(test_data)
+                    
+                    fig_qq = go.Figure()
+                    fig_qq.add_trace(go.Scatter(x=theoretical_quantiles, y=sample_quantiles,
+                                               mode='markers', name='Dados'))
+                    fig_qq.add_trace(go.Scatter(x=[theoretical_quantiles.min(), theoretical_quantiles.max()],
+                                               y=[theoretical_quantiles.min(), theoretical_quantiles.max()],
+                                               mode='lines', name='Linha de Referência',
+                                               line=dict(color='red', dash='dash')))
+                    
+                    fig_qq.update_layout(title="Q-Q Plot",
+                                        xaxis_title="Quantis Teóricos",
+                                        yaxis_title="Quantis Amostrais")
+                    st.plotly_chart(fig_qq, use_container_width=True)
+
+# ========================= TAB 7: CORRELAÇÃO =========================
+with tabs[6]:
+    st.header("🔗 Análise de Correlação")
+    
+    if data is not None:
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) >= 2:
+            selected_cols = st.multiselect(
+                "Selecione as variáveis:",
+                numeric_cols,
+                default=numeric_cols[:5] if len(numeric_cols) > 5 else numeric_cols,
+                key="corr_cols"
+            )
+            
+            if len(selected_cols) >= 2:
+                # Métodos de correlação
+                corr_method = st.selectbox(
+                    "Método de Correlação:",
+                    ["Pearson", "Spearman", "Kendall"]
+                )
                 
-                # Visualização
+                if st.button("Calcular Correlação", key="calc_corr"):
+                    # Calcular matriz
+                    if corr_method == "Pearson":
+                        corr_matrix = data[selected_cols].corr(method='pearson')
+                    elif corr_method == "Spearman":
+                        corr_matrix = data[selected_cols].corr(method='spearman')
+                    else:
+                        corr_matrix = data[selected_cols].corr(method='kendall')
+                    
+                    # Heatmap
+                    fig = px.imshow(corr_matrix,
+                                   labels=dict(color="Correlação"),
+                                   x=selected_cols,
+                                   y=selected_cols,
+                                   color_continuous_scale='RdBu',
+                                   zmin=-1, zmax=1)
+                    
+                    fig.update_layout(title=f"Matriz de Correlação ({corr_method})")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Correlações significativas
+                    st.subheader("📊 Correlações Significativas")
+                    threshold = st.slider("Threshold:", 0.0, 1.0, 0.7)
+                    
+                    strong_corr = []
+                    for i in range(len(corr_matrix.columns)):
+                        for j in range(i+1, len(corr_matrix.columns)):
+                            if abs(corr_matrix.iloc[i, j]) >= threshold:
+                                strong_corr.append({
+                                    'Var 1': corr_matrix.columns[i],
+                                    'Var 2': corr_matrix.columns[j],
+                                    'Correlação': corr_matrix.iloc[i, j],
+                                    'Força': 'Forte' if abs(corr_matrix.iloc[i, j]) >= 0.7 else 'Moderada'
+                                })
+                    
+                    if strong_corr:
+                        st.dataframe(pd.DataFrame(strong_corr), use_container_width=True)
+
+# ========================= TAB 8: BOX PLOT & OUTLIERS =========================
+with tabs[7]:
+    st.header("📊 Box Plot e Análise de Outliers")
+    
+    if data is not None:
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if numeric_cols:
+            selected_cols = st.multiselect(
+                "Selecione as variáveis:",
+                numeric_cols,
+                default=numeric_cols[:3] if len(numeric_cols) > 3 else numeric_cols,
+                key="box_cols"
+            )
+            
+            if selected_cols and st.button("Gerar Box Plots", key="gen_box"):
+                # Box plots
+                fig = go.Figure()
+                
+                outliers_summary = []
+                
+                for col in selected_cols:
+                    col_data = data[col].dropna()
+                    
+                    # Calcular outliers usando IQR
+                    Q1 = col_data.quantile(0.25)
+                    Q3 = col_data.quantile(0.75)
+                    IQR = Q3 - Q1
+                    lower_bound = Q1 - 1.5 * IQR
+                    upper_bound = Q3 + 1.5 * IQR
+                    
+                    outliers = col_data[(col_data < lower_bound) | (col_data > upper_bound)]
+                    
+                    fig.add_trace(go.Box(y=col_data, name=col))
+                    
+                    outliers_summary.append({
+                        'Variável': col,
+                        'Q1': Q1,
+                        'Q3': Q3,
+                        'IQR': IQR,
+                        'Limite Inferior': lower_bound,
+                        'Limite Superior': upper_bound,
+                        'Outliers': len(outliers),
+                        '% Outliers': (len(outliers) / len(col_data) * 100)
+                    })
+                
+                fig.update_layout(title="Box Plots - Análise de Outliers", height=500)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Resumo de outliers
+                st.subheader("📋 Resumo de Outliers")
+                outliers_df = pd.DataFrame(outliers_summary)
+                st.dataframe(outliers_df, use_container_width=True)
+                
+                # Tratamento de outliers
+                st.subheader("🔧 Tratamento de Outliers")
+                treatment = st.selectbox(
+                    "Método de tratamento:",
+                    ["Nenhum", "Remover", "Capping (Limitar)", "Transformação Log", "Z-Score"]
+                )
+                
+                if treatment != "Nenhum" and st.button("Aplicar Tratamento"):
+                    treated_data = data.copy()
+                    
+                    for col in selected_cols:
+                        if treatment == "Remover":
+                            Q1 = treated_data[col].quantile(0.25)
+                            Q3 = treated_data[col].quantile(0.75)
+                            IQR = Q3 - Q1
+                            treated_data = treated_data[
+                                (treated_data[col] >= Q1 - 1.5 * IQR) &
+                                (treated_data[col] <= Q3 + 1.5 * IQR)
+                            ]
+                        elif treatment == "Capping":
+                            Q1 = treated_data[col].quantile(0.25)
+                            Q3 = treated_data[col].quantile(0.75)
+                            IQR = Q3 - Q1
+                            lower = Q1 - 1.5 * IQR
+                            upper = Q3 + 1.5 * IQR
+                            treated_data[col] = treated_data[col].clip(lower=lower, upper=upper)
+                        elif treatment == "Transformação Log":
+                            treated_data[col] = np.log1p(treated_data[col])
+                        elif treatment == "Z-Score":
+                            z_scores = np.abs(stats.zscore(treated_data[col].dropna()))
+                            treated_data = treated_data[z_scores < 3]
+                    
+                    st.success(f"✅ Tratamento '{treatment}' aplicado!")
+                    st.session_state.treated_data = treated_data
+
+# ========================= TAB 9: CAPACIDADE =========================
+with tabs[8]:
+    st.header("⚙️ Análise de Capacidade do Processo")
+    
+    if data is not None:
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if numeric_cols:
+            selected_col = st.selectbox("Variável do processo:", numeric_cols, key="cap_col")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                lsl = st.number_input("LSL (Limite Inferior):", value=0.0)
+            with col2:
+                usl = st.number_input("USL (Limite Superior):", value=100.0)
+            
+            if st.button("Calcular Capacidade", key="calc_cap") and usl > lsl:
+                process_data = data[selected_col].dropna()
+                
+                # Cálculos
+                mean = process_data.mean()
+                std = process_data.std()
+                
+                # Índices de capacidade
+                cp = (usl - lsl) / (6 * std)
+                cpu = (usl - mean) / (3 * std)
+                cpl = (mean - lsl) / (3 * std)
+                cpk = min(cpu, cpl)
+                
+                # Índices de performance
+                pp = (usl - lsl) / (6 * process_data.std(ddof=1))
+                ppu = (usl - mean) / (3 * process_data.std(ddof=1))
+                ppl = (mean - lsl) / (3 * process_data.std(ddof=1))
+                ppk = min(ppu, ppl)
+                
+                # PPM
+                prob_below_lsl = stats.norm.cdf(lsl, mean, std)
+                prob_above_usl = 1 - stats.norm.cdf(usl, mean, std)
+                ppm_total = (prob_below_lsl + prob_above_usl) * 1_000_000
+                
+                # Nível sigma
+                sigma_level = 3 * cpk
+                
+                # Métricas
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Cp", f"{cp:.3f}")
+                    st.metric("Pp", f"{pp:.3f}")
+                
+                with col2:
+                    st.metric("Cpk", f"{cpk:.3f}")
+                    st.metric("Ppk", f"{ppk:.3f}")
+                
+                with col3:
+                    st.metric("PPM Total", f"{ppm_total:.0f}")
+                    st.metric("Nível Sigma", f"{sigma_level:.1f}σ")
+                
+                with col4:
+                    # Interpretação
+                    if cpk >= 1.33:
+                        st.success("✅ Processo Capaz")
+                    elif cpk >= 1.0:
+                        st.warning("⚠️ Marginalmente Capaz")
+                    else:
+                        st.error("❌ Não Capaz")
+                
+                # Gráfico
                 fig = go.Figure()
                 
                 # Histograma
-                fig.add_trace(go.Histogram(
-                    x=test_data,
-                    name='Dados',
-                    nbinsx=30,
-                    histnorm='probability density'
-                ))
+                fig.add_trace(go.Histogram(x=process_data, nbinsx=30, name='Dados',
+                                          histnorm='probability density'))
                 
-                # Curva normal teórica
-                x_range = np.linspace(test_data.min(), test_data.max(), 100)
-                y_normal = stats.norm.pdf(x_range, test_data.mean(), test_data.std())
-                fig.add_trace(go.Scatter(
-                    x=x_range,
-                    y=y_normal,
-                    mode='lines',
-                    name='Normal Teórica',
-                    line=dict(color='red')
-                ))
+                # Curva normal
+                x_range = np.linspace(process_data.min(), process_data.max(), 100)
+                y_normal = stats.norm.pdf(x_range, mean, std)
+                fig.add_trace(go.Scatter(x=x_range, y=y_normal, mode='lines',
+                                        name='Distribuição Normal', line=dict(color='red')))
                 
-                fig.update_layout(title=f"Teste de Normalidade: {test_col}")
+                # Limites
+                fig.add_vline(x=lsl, line_dash="dash", line_color="red", annotation_text=f"LSL: {lsl}")
+                fig.add_vline(x=usl, line_dash="dash", line_color="red", annotation_text=f"USL: {usl}")
+                fig.add_vline(x=mean, line_dash="dash", line_color="green", annotation_text=f"Média: {mean:.2f}")
+                
+                fig.update_layout(title="Análise de Capacidade do Processo", height=500)
                 st.plotly_chart(fig, use_container_width=True)
-                
-                # Q-Q Plot
-                st.write("### Q-Q Plot")
-                theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, len(test_data)))
-                sample_quantiles = np.sort(test_data)
-                
-                fig_qq = go.Figure()
-                fig_qq.add_trace(go.Scatter(
-                    x=theoretical_quantiles,
-                    y=sample_quantiles,
-                    mode='markers',
-                    name='Dados'
-                ))
-                fig_qq.add_trace(go.Scatter(
-                    x=[theoretical_quantiles.min(), theoretical_quantiles.max()],
-                    y=[theoretical_quantiles.min(), theoretical_quantiles.max()],
-                    mode='lines',
-                    name='Linha de Referência',
-                    line=dict(color='red', dash='dash')
-                ))
-                fig_qq.update_layout(
-                    title="Q-Q Plot",
-                    xaxis_title="Quantis Teóricos",
-                    yaxis_title="Quantis Amostrais"
-                )
-                st.plotly_chart(fig_qq, use_container_width=True)
 
-# Tab 5: Análise dos 5 Porquês
-with tab5:
-    st.header("Análise dos 5 Porquês")
+# ========================= TAB 10: ANOVA =========================
+with tabs[9]:
+    st.header("🎲 ANOVA - Análise de Variância")
     
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        problem_5why = st.text_area(
-            "Descreva o problema:",
-            value=st.session_state.get('problem_statement', ''),
-            height=100
-        )
+    if data is not None:
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
         
-        st.subheader("Sequência dos Porquês")
-        
-        whys = []
-        for i in range(5):
-            why = st.text_area(
-                f"Por quê {i+1}?",
-                key=f"why_{i+1}",
-                height=80,
-                help=f"Responda: Por que {'o problema ocorre' if i == 0 else f'a resposta {i} acontece'}?"
-            )
-            whys.append(why)
+        if numeric_cols and categorical_cols:
+            response_var = st.selectbox("Variável resposta:", numeric_cols, key="anova_resp")
+            factor_var = st.selectbox("Fator:", categorical_cols, key="anova_factor")
             
-            if why and i < 4:
-                st.write(f"↓")
-        
-        root_cause = st.text_area(
-            "Causa Raiz Identificada:",
-            height=100,
-            help="Baseado na análise dos 5 porquês, qual é a causa raiz?"
-        )
-        
-        action_plan = st.text_area(
-            "Plano de Ação Proposto:",
-            height=100,
-            help="Que ações podem ser tomadas para eliminar a causa raiz?"
-        )
-        
-        if st.button("Salvar Análise dos 5 Porquês", type="primary"):
-            analysis_5why = {
-                "problem": problem_5why,
-                "whys": whys,
-                "root_cause": root_cause,
-                "action_plan": action_plan,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            if save_analysis_to_db(project_name, "5_whys", analysis_5why):
-                st.success("✅ Análise dos 5 Porquês salva com sucesso!")
+            if st.button("Executar ANOVA", key="run_anova"):
+                # Preparar dados
+                groups = []
+                labels = []
                 
-                # Visualização em formato de árvore
-                st.write("### Visualização da Análise")
-                for i, why in enumerate(whys):
-                    if why:
-                        st.write(f"{'  ' * i}↳ **Por quê {i+1}?** {why}")
+                for group in data[factor_var].unique():
+                    group_data = data[data[factor_var] == group][response_var].dropna()
+                    if len(group_data) > 0:
+                        groups.append(group_data)
+                        labels.append(group)
                 
-                if root_cause:
-                    st.write(f"\n🎯 **Causa Raiz:** {root_cause}")
-                
-                if action_plan:
-                    st.write(f"\n📋 **Plano de Ação:** {action_plan}")
-    
-    with col2:
-        st.info("""
-        **Técnica dos 5 Porquês:**
-        1. Defina claramente o problema
-        2. Pergunte "Por quê?" 5 vezes
-        3. Cada resposta se torna a base para a próxima pergunta
-        4. Continue até encontrar a causa raiz
-        5. Desenvolva ações para eliminar a causa raiz
-        
-        **Dicas:**
-        - Seja específico em cada resposta
-        - Base-se em fatos, não suposições
-        - Pode ser necessário mais ou menos que 5 porquês
-        - Valide a causa raiz com dados
-        """)
+                if len(groups) >= 2:
+                    # ANOVA
+                    f_stat, p_value = f_oneway(*groups)
+                    
+                    # Tabela ANOVA
+                    total_mean = data[response_var].mean()
+                    sst = sum([(x - total_mean)**2 for group in groups for x in group])
+                    ssb = sum([len(group) * (group.mean() - total_mean)**2 for group in groups])
+                    ssw = sst - ssb
+                    
+                    df_between = len(groups) - 1
+                    df_within = sum([len(g) - 1 for g in groups])
+                    df_total = df_between + df_within
+                    
+                    msb = ssb / df_between
+                    msw = ssw / df_within
+                    
+                    # Resultados
+                    st.subheader("📊 Tabela ANOVA")
+                    
+                    anova_table = pd.DataFrame({
+                        'Fonte': ['Entre Grupos', 'Dentro dos Grupos', 'Total'],
+                        'SQ': [ssb, ssw, sst],
+                        'GL': [df_between, df_within, df_total],
+                        'QM': [msb, msw, '-'],
+                        'F': [f_stat, '-', '-'],
+                        'p-valor': [p_value, '-', '-']
+                    })
+                    
+                    st.dataframe(anova_table, use_container_width=True)
+                    
+                    # Interpretação
+                    alpha = 0.05
+                    if p_value < alpha:
+                        st.error(f"Rejeitar H₀: Existe diferença significativa entre os grupos (p={p_value:.4f} < {alpha})")
+                    else:
+                        st.success(f"Não rejeitar H₀: Não há diferença significativa (p={p_value:.4f} ≥ {alpha})")
+                    
+                    # Box plots
+                    fig = go.Figure()
+                    for group_data, label in zip(groups, labels):
+                        fig.add_trace(go.Box(y=group_data, name=label))
+                    
+                    fig.update_layout(title=f"ANOVA: {response_var} por {factor_var}")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Post-hoc (Tukey)
+                    if p_value < alpha and st.checkbox("Executar teste Post-hoc (Tukey)"):
+                        from scipy.stats import tukey_hsd
+                        
+                        result = tukey_hsd(*groups)
+                        st.subheader("Teste de Tukey HSD")
+                        st.dataframe(pd.DataFrame(result), use_container_width=True)
 
-# Resumo das Análises
-st.divider()
-st.header("📊 Resumo das Análises Realizadas")
+# ========================= TAB 11: 5 PORQUÊS =========================
+with tabs[10]:
+    st.header("❓ Análise dos 5 Porquês")
+    
+    problem = st.text_area("Problema:", height=100)
+    
+    whys = []
+    for i in range(5):
+        why = st.text_area(f"Por quê {i+1}?", key=f"why_{i}", height=80)
+        whys.append(why)
+    
+    root_cause = st.text_area("Causa Raiz Identificada:", height=100)
+    action_plan = st.text_area("Plano de Ação:", height=100)
+    
+    if st.button("💾 Salvar 5 Porquês", key="save_5why"):
+        analysis = {
+            "problem": problem,
+            "whys": whys,
+            "root_cause": root_cause,
+            "action_plan": action_plan
+        }
+        
+        if save_analysis_to_db(project_name, "5_whys", analysis):
+            st.success("✅ Análise salva!")
 
-if supabase:
-    try:
-        analyses = supabase.table('analyses').select("*").eq('project_name', project_name).execute()
-        if analyses.data:
-            analyses_df = pd.DataFrame(analyses.data)
+# ========================= TAB 12: FMEA =========================
+with tabs[11]:
+    st.header("📋 FMEA - Análise de Modo e Efeito de Falha")
+    
+    with st.form("fmea_form"):
+        st.subheader("Adicionar Modo de Falha")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            process_step = st.text_input("Etapa do Processo")
+            failure_mode = st.text_input("Modo de Falha")
+            failure_effect = st.text_area("Efeito da Falha")
+        
+        with col2:
+            severity = st.slider("Severidade (1-10)", 1, 10, 5)
+            occurrence = st.slider("Ocorrência (1-10)", 1, 10, 5)
+            detection = st.slider("Detecção (1-10)", 1, 10, 5)
+        
+        with col3:
+            cause = st.text_area("Causa Potencial")
+            current_controls = st.text_area("Controles Atuais")
+            recommended_actions = st.text_area("Ações Recomendadas")
+        
+        submitted = st.form_submit_button("Adicionar")
+        
+        if submitted:
+            rpn = severity * occurrence * detection
             
-            # Agrupar por tipo de análise
-            analysis_counts = analyses_df['analysis_type'].value_counts()
+            if 'fmea_items' not in st.session_state:
+                st.session_state.fmea_items = []
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total de Análises", len(analyses_df))
-            with col2:
-                st.metric("Tipos Diferentes", len(analysis_counts))
-            with col3:
-                if len(analyses_df) > 0:
-                    last_analysis = pd.to_datetime(analyses_df['created_at']).max()
-                    st.metric("Última Análise", last_analysis.strftime("%d/%m/%Y %H:%M"))
+            st.session_state.fmea_items.append({
+                'process_step': process_step,
+                'failure_mode': failure_mode,
+                'failure_effect': failure_effect,
+                'severity': severity,
+                'occurrence': occurrence,
+                'detection': detection,
+                'rpn': rpn,
+                'cause': cause,
+                'current_controls': current_controls,
+                'recommended_actions': recommended_actions
+            })
             
-            # Tabela de análises
-            st.subheader("Histórico de Análises")
-            display_df = analyses_df[['analysis_type', 'created_at']].copy()
-            display_df['created_at'] = pd.to_datetime(display_df['created_at']).dt.strftime("%d/%m/%Y %H:%M")
-            st.dataframe(display_df, use_container_width=True)
-            
-            # Download de relatório
-            if st.button("📥 Baixar Relatório de Análises"):
-                report = {
-                    "project_name": project_name,
-                    "total_analyses": len(analyses_df),
-                    "analysis_types": analysis_counts.to_dict(),
-                    "analyses": analyses_df.to_dict('records')
-                }
-                
-                st.download_button(
-                    label="Download JSON",
-                    data=pd.DataFrame(report).to_json(),
-                    file_name=f"analises_{project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
-                )
-        else:
-            st.info("Nenhuma análise realizada ainda para este projeto.")
-    except Exception as e:
-        st.error(f"Erro ao buscar histórico de análises: {str(e)}")
-else:
-    st.warning("Supabase não configurado. Histórico de análises não disponível.")
+            st.success(f"✅ Adicionado! RPN = {rpn}")
+    
+    # Exibir FMEA
+    if 'fmea_items' in st.session_state and st.session_state.fmea_items:
+        st.subheader("📊 Tabela FMEA")
+        
+        fmea_df = pd.DataFrame(st.session_state.fmea_items)
+        fmea_df = fmea_df.sort_values('rpn', ascending=False)
+        
+        # Colorir por RPN
+        def color_rpn(val):
+            if val >= 100:
+                return 'background-color: #ff4444'
+            elif val >= 50:
+                return 'background-color: #ffaa00'
+            else:
+                return 'background-color: #44ff44'
+        
+        styled_df = fmea_df.style.applymap(color_rpn, subset=['rpn'])
+        st.dataframe(styled_df, use_container_width=True)
+        
+        # Gráfico de Pareto dos RPNs
+        fig = px.bar(fmea_df.head(10), x='failure_mode', y='rpn',
+                    title='Top 10 Modos de Falha por RPN')
+        st.plotly_chart(fig, use_container_width=True)
 
 # Footer
 st.divider()
-st.caption("💡 **Dica:** Complete todas as análises antes de prosseguir para a fase Improve")
+st.caption("💡 Complete todas as análises antes de prosseguir para Improve")
