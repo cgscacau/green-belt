@@ -50,6 +50,13 @@ supabase = init_supabase()
 if 'selected_tab' not in st.session_state:
     st.session_state.selected_tab = 0
 
+# Logo após st.set_page_config, ADICIONE:
+
+# Manter controle da tab ativa
+if 'active_analyze_tab' not in st.session_state:
+    st.session_state.active_analyze_tab = 0
+
+
 # Funções de dados
 @st.cache_data(ttl=300)
 def fetch_process_data_from_db(project_name):
@@ -172,6 +179,20 @@ tab_list = [
     "📋 FMEA"
 ]
 
+# Criar tabs mantendo o estado
+selected_tab_name = st.radio(
+    "Selecione a análise:",
+    tab_list,
+    index=st.session_state.active_analyze_tab,
+    horizontal=False,
+    key="analyze_tab_selector",
+    label_visibility="visible"
+)
+
+# Atualizar índice
+st.session_state.active_analyze_tab = tab_list.index(selected_tab_name)
+
+st.divider()
 # Criar tabs
 tabs = st.tabs(tab_list)
 
