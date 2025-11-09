@@ -1647,115 +1647,408 @@ CONCLUSÃO:
 
 ############################################################################################################################################################################################################################################
 
-
 # ========================= TAB 4: DATA VISUALIZATION =========================
 
 with tab4:
-    st.header("Data Visualization")
+    st.header("📈 Data Visualization")
+    st.markdown("**Objetivo:** Criar visualizações interativas para explorar os dados")
     
-    uploaded_file = st.file_uploader(
-        "Faça upload dos dados para visualização (CSV, Excel)",
-        type=['csv', 'xlsx', 'xls'],
-        key="viz_upload"
-    )
+    st.divider()
+    
+    # Upload de arquivo
+    col_upload1, col_upload2 = st.columns([2, 1])
+    
+    with col_upload1:
+        uploaded_file = st.file_uploader(
+            "📤 Faça upload dos dados para visualização (CSV, Excel)",
+            type=['csv', 'xlsx', 'xls'],
+            help="Arquivo com dados para criar gráficos",
+            key="viz_upload"
+        )
+    
+    with col_upload2:
+        st.info("""
+        **Tipos de gráficos:**
+        - Linha
+        - Barra
+        - Scatter
+        - Box Plot
+        - Histograma
+        - Pareto
+        """)
     
     if uploaded_file is not None:
         try:
+            # Detectar extensão
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
-            if file_extension == 'csv':
-                viz_data = pd.read_csv(uploaded_file)
-            elif file_extension in ['xlsx', 'xls']:
-                viz_data = pd.read_excel(uploaded_file)
-            else:
-                st.error("❌ Formato não suportado")
-                st.stop()
+            st.info(f"📄 Arquivo: **{uploaded_file.name}**")
             
+            # Ler arquivo
+            with st.spinner("Lendo arquivo..."):
+                if file_extension == 'csv':
+                    try:
+                        viz_data = pd.read_csv(uploaded_file, encoding='utf-8')
+                    except UnicodeDecodeError:
+                        uploaded_file.seek(0)
+                        viz_data = pd.read_csv(uploaded_file, encoding='latin-1')
+                        st.warning("⚠️ Arquivo lido com encoding latin-1")
+                
+                elif file_extension in ['xlsx', 'xls']:
+                    viz_data = pd.read_excel(uploaded_file)
+                
+                else:
+                    st.error("❌ Formato não suportado")
+                    st.stop()
+            
+            st.success(f"✅ Arquivo carregado: {len(viz_data)} linhas, {len(viz_data.columns)} colunas")
+            
+            # Preview dos dados
+            with st.expander("👀 Preview dos Dados"):
+                st.dataframe(viz_data.head(10), use_container_width=True)
+            
+            st.divider()
+            
+            # ============= SELEÇÃO DE TIPO DE GRÁFICO =============
             st.subheader("📊 Criar Visualização")
             
-            chart_type = st.selectbox(
-                "Tipo de gráfico:",
-                ["Linha", "Barra", "Scatter", "Box Plot", "Histograma", "Pareto"]
-            )
+            col_chart1, col_chart2 = st.columns([2, 1])
             
+            with col_chart1:
+                chart_type = st.selectbox(
+                    "📌 Selecione o tipo de gráfico:",
+                    ["Linha", "Barra", "Scatter", "Box Plot", "Histograma", "Pareto"],
+                    key="chart_type_select"
+                )
+            
+            with col_chart2:
+                # Info sobre o tipo selecionado
+                chart_info = {
+                    "Linha": "Tendências ao longo do tempo",
+                    "Barra": "Comparação entre categorias",
+                    "Scatter": "Relação entre variáveis",
+                    "Box Plot": "Distribuição e outliers",
+                    "Histograma": "Distribuição de frequência",
+                    "Pareto": "Análise 80/20"
+                }
+                st.info(f"**Uso:** {chart_info[chart_type]}")
+            
+            st.divider()
+            
+            # ============= GRÁFICOS DE LINHA, BARRA, SCATTER =============
             if chart_type in ["Linha", "Barra", "Scatter"]:
-                col1, col2 = st.columns(2)
-                with col1:
-                    x_col = st.selectbox("Eixo X:", viz_data.columns)
-                with col2:
-                    y_col = st.selectbox("Eixo Y:", viz_data.columns)
                 
-                if st.button("Gerar Gráfico", type="primary"):
-                    if chart_type == "Linha":
-                        fig = px.line(viz_data, x=x_col, y=y_col, title=f"{y_col} vs {x_col}")
-                    elif chart_type == "Barra":
-                        fig = px.bar(viz_data, x=x_col, y=y_col, title=f"{y_col} por {x_col}")
-                    elif chart_type == "Scatter":
-                        fig = px.scatter(viz_data, x=x_col, y=y_col, title=f"{y_col} vs {x_col}",
-                                       trendline="ols")
+                col_axis1, col_axis2 = st.columns(2)
+                
+                with col_axis1:
+                    x_col = st.selectbox("📊 Eixo X:", viz_data.columns, key="x_axis")
+                
+                with col_axis2:
+                    y_col = st.selectbox("📊 Eixo Y:", viz_data.columns, key="y_axis")
+                
+                # Opções adicionais
+                with st.expander("⚙️ Opções Avançadas"):
+                    col_opt1, col_opt2 = st.columns(2)
                     
-                    st.plotly_chart(fig, use_container_width=True)
+                    with col_opt1:
+                        color_col = st.selectbox(
+                            "Colorir por (opcional):",
+                            ["Nenhum"] + list(viz_data.columns),
+                            key="color_by"
+                        )
+                    
+                    with col_opt2:
+                        if chart_type == "Scatter":
+                            show_trendline = st.checkbox("Mostrar linha de tendência", value=True)
+                
+                # Botão gerar
+                if st.button("🎨 Gerar Gráfico", type="primary", use_container_width=True, key="gen_chart_1"):
+                    try:
+                        color_param = None if color_col == "Nenhum" else color_col
+                        
+                        if chart_type == "Linha":
+                            fig = px.line(
+                                viz_data, 
+                                x=x_col, 
+                                y=y_col, 
+                                color=color_param,
+                                title=f"Gráfico de Linha: {y_col} vs {x_col}"
+                            )
+                        
+                        elif chart_type == "Barra":
+                            fig = px.bar(
+                                viz_data, 
+                                x=x_col, 
+                                y=y_col, 
+                                color=color_param,
+                                title=f"Gráfico de Barras: {y_col} por {x_col}"
+                            )
+                        
+                        elif chart_type == "Scatter":
+                            trendline_param = "ols" if show_trendline else None
+                            fig = px.scatter(
+                                viz_data, 
+                                x=x_col, 
+                                y=y_col, 
+                                color=color_param,
+                                trendline=trendline_param,
+                                title=f"Gráfico de Dispersão: {y_col} vs {x_col}"
+                            )
+                        
+                        fig.update_layout(height=500)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.success("✅ Gráfico gerado com sucesso!")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Erro ao gerar gráfico: {str(e)}")
             
+            # ============= BOX PLOT =============
             elif chart_type == "Box Plot":
-                numeric_cols_viz = [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()]
-                col = st.selectbox("Selecione a variável:", numeric_cols_viz)
-                if col:
-                    fig = px.box(viz_data, y=col, title=f"Box Plot - {col}")
-                    st.plotly_chart(fig, use_container_width=True)
-            
-            elif chart_type == "Histograma":
-                numeric_cols_viz = [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()]
-                col = st.selectbox("Selecione a variável:", numeric_cols_viz)
-                bins = st.slider("Número de bins:", 10, 50, 20)
-                if col:
-                    fig = px.histogram(viz_data, x=col, nbins=bins, title=f"Histograma - {col}")
-                    st.plotly_chart(fig, use_container_width=True)
-            
-            elif chart_type == "Pareto":
-                cat_col = st.selectbox("Categoria:", viz_data.columns)
-                val_col = st.selectbox("Valor (ou use contagem):", ["Contagem"] + list(viz_data.columns))
                 
-                if st.button("Gerar Pareto", type="primary"):
-                    if val_col == "Contagem":
-                        pareto_data = viz_data[cat_col].value_counts().reset_index()
-                        pareto_data.columns = ['Categoria', 'Frequência']
-                    else:
-                        pareto_data = viz_data.groupby(cat_col)[val_col].sum().reset_index()
-                        pareto_data.columns = ['Categoria', 'Valor']
-                    
-                    pareto_data = pareto_data.sort_values(by=pareto_data.columns[1], ascending=False)
-                    pareto_data['Percentual'] = pareto_data.iloc[:, 1] / pareto_data.iloc[:, 1].sum() * 100
-                    pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
-                    
-                    fig = go.Figure()
-                    
-                    fig.add_trace(go.Bar(
-                        x=pareto_data['Categoria'],
-                        y=pareto_data.iloc[:, 1],
-                        name='Frequência',
-                        yaxis='y'
-                    ))
-                    
-                    fig.add_trace(go.Scatter(
-                        x=pareto_data['Categoria'],
-                        y=pareto_data['Acumulado'],
-                        name='% Acumulado',
-                        yaxis='y2',
-                        line=dict(color='red'),
-                        mode='lines+markers'
-                    ))
-                    
-                    fig.update_layout(
-                        title="Gráfico de Pareto",
-                        yaxis=dict(title="Frequência"),
-                        yaxis2=dict(title="% Acumulado", overlaying='y', side='right', range=[0, 100]),
-                        height=400
+                # Detectar colunas numéricas
+                numeric_cols_viz = [
+                    col for col in viz_data.columns 
+                    if pd.to_numeric(viz_data[col], errors='coerce').notna().any()
+                ]
+                
+                if not numeric_cols_viz:
+                    st.warning("⚠️ Nenhuma coluna numérica encontrada")
+                    st.stop()
+                
+                col_box1, col_box2 = st.columns(2)
+                
+                with col_box1:
+                    selected_col = st.selectbox(
+                        "📊 Selecione a variável:",
+                        numeric_cols_viz,
+                        key="box_col"
                     )
+                
+                with col_box2:
+                    group_by = st.selectbox(
+                        "Agrupar por (opcional):",
+                        ["Nenhum"] + list(viz_data.columns),
+                        key="box_group"
+                    )
+                
+                if st.button("🎨 Gerar Box Plot", type="primary", use_container_width=True, key="gen_box"):
+                    try:
+                        if group_by == "Nenhum":
+                            fig = px.box(
+                                viz_data, 
+                                y=selected_col, 
+                                title=f"Box Plot - {selected_col}"
+                            )
+                        else:
+                            fig = px.box(
+                                viz_data, 
+                                x=group_by,
+                                y=selected_col, 
+                                title=f"Box Plot - {selected_col} por {group_by}"
+                            )
+                        
+                        fig.update_layout(height=500)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Estatísticas
+                        st.subheader("📊 Estatísticas")
+                        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                        
+                        data_col = pd.to_numeric(viz_data[selected_col], errors='coerce').dropna()
+                        
+                        with col_stat1:
+                            st.metric("Mediana", f"{data_col.median():.2f}")
+                        with col_stat2:
+                            st.metric("Q1 (25%)", f"{data_col.quantile(0.25):.2f}")
+                        with col_stat3:
+                            st.metric("Q3 (75%)", f"{data_col.quantile(0.75):.2f}")
+                        with col_stat4:
+                            iqr = data_col.quantile(0.75) - data_col.quantile(0.25)
+                            st.metric("IQR", f"{iqr:.2f}")
+                        
+                        st.success("✅ Box Plot gerado com sucesso!")
                     
-                    st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"❌ Erro ao gerar Box Plot: {str(e)}")
             
+            # ============= HISTOGRAMA =============
+            elif chart_type == "Histograma":
+                
+                # Detectar colunas numéricas
+                numeric_cols_viz = [
+                    col for col in viz_data.columns 
+                    if pd.to_numeric(viz_data[col], errors='coerce').notna().any()
+                ]
+                
+                if not numeric_cols_viz:
+                    st.warning("⚠️ Nenhuma coluna numérica encontrada")
+                    st.stop()
+                
+                col_hist1, col_hist2 = st.columns(2)
+                
+                with col_hist1:
+                    selected_col = st.selectbox(
+                        "📊 Selecione a variável:",
+                        numeric_cols_viz,
+                        key="hist_col"
+                    )
+                
+                with col_hist2:
+                    bins = st.slider(
+                        "Número de bins:",
+                        min_value=5,
+                        max_value=100,
+                        value=20,
+                        key="hist_bins"
+                    )
+                
+                if st.button("🎨 Gerar Histograma", type="primary", use_container_width=True, key="gen_hist"):
+                    try:
+                        fig = px.histogram(
+                            viz_data, 
+                            x=selected_col, 
+                            nbins=bins,
+                            title=f"Histograma - {selected_col}"
+                        )
+                        
+                        fig.update_layout(height=500)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Estatísticas
+                        st.subheader("📊 Estatísticas")
+                        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                        
+                        data_col = pd.to_numeric(viz_data[selected_col], errors='coerce').dropna()
+                        
+                        with col_stat1:
+                            st.metric("Média", f"{data_col.mean():.2f}")
+                        with col_stat2:
+                            st.metric("Mediana", f"{data_col.median():.2f}")
+                        with col_stat3:
+                            st.metric("Desvio Padrão", f"{data_col.std():.2f}")
+                        with col_stat4:
+                            st.metric("Assimetria", f"{data_col.skew():.2f}")
+                        
+                        st.success("✅ Histograma gerado com sucesso!")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Erro ao gerar Histograma: {str(e)}")
+            
+            # ============= PARETO =============
+            elif chart_type == "Pareto":
+                
+                col_pareto1, col_pareto2 = st.columns(2)
+                
+                with col_pareto1:
+                    cat_col = st.selectbox(
+                        "📊 Coluna de Categoria:",
+                        viz_data.columns,
+                        key="pareto_cat"
+                    )
+                
+                with col_pareto2:
+                    val_col = st.selectbox(
+                        "📊 Coluna de Valor:",
+                        ["Contagem"] + list(viz_data.columns),
+                        key="pareto_val"
+                    )
+                
+                if st.button("🎨 Gerar Pareto", type="primary", use_container_width=True, key="gen_pareto_viz"):
+                    try:
+                        # Processar dados
+                        if val_col == "Contagem":
+                            pareto_data = viz_data[cat_col].value_counts().reset_index()
+                            pareto_data.columns = ['Categoria', 'Frequência']
+                            value_column = 'Frequência'
+                        else:
+                            pareto_data = viz_data.groupby(cat_col)[val_col].sum().reset_index()
+                            pareto_data.columns = ['Categoria', 'Valor']
+                            value_column = 'Valor'
+                        
+                        pareto_data = pareto_data.sort_values(by=value_column, ascending=False)
+                        total = pareto_data[value_column].sum()
+                        pareto_data['Percentual'] = (pareto_data[value_column] / total) * 100
+                        pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
+                        
+                        # Criar gráfico
+                        fig = go.Figure()
+                        
+                        fig.add_trace(go.Bar(
+                            x=pareto_data['Categoria'],
+                            y=pareto_data[value_column],
+                            name=value_column,
+                            marker_color='lightblue',
+                            yaxis='y'
+                        ))
+                        
+                        fig.add_trace(go.Scatter(
+                            x=pareto_data['Categoria'],
+                            y=pareto_data['Acumulado'],
+                            name='% Acumulado',
+                            yaxis='y2',
+                            line=dict(color='red', width=2),
+                            mode='lines+markers'
+                        ))
+                        
+                        fig.add_hline(
+                            y=80,
+                            line_dash="dash",
+                            line_color="orange",
+                            yref='y2',
+                            annotation_text="80%"
+                        )
+                        
+                        fig.update_layout(
+                            title="Gráfico de Pareto",
+                            xaxis=dict(title="Categorias"),
+                            yaxis=dict(title=value_column),
+                            yaxis2=dict(
+                                title="% Acumulado",
+                                overlaying='y',
+                                side='right',
+                                range=[0, 105]
+                            ),
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.success("✅ Gráfico de Pareto gerado com sucesso!")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Erro ao gerar Pareto: {str(e)}")
+        
         except Exception as e:
-            st.error(f"Erro ao processar arquivo: {str(e)}")
+            st.error(f"❌ Erro ao processar arquivo: {str(e)}")
+            
+            with st.expander("🐛 Detalhes do Erro"):
+                st.write("**Tipo:**", type(e).__name__)
+                st.write("**Mensagem:**", str(e))
+    
+    else:
+        st.info("📤 Nenhum arquivo carregado. Faça upload para criar visualizações.")
+        
+        # Exemplo de uso
+        with st.expander("💡 Como usar esta ferramenta"):
+            st.markdown("""
+            **Passo a passo:**
+            
+            1. **Upload:** Carregue um arquivo CSV ou Excel
+            2. **Escolha:** Selecione o tipo de gráfico desejado
+            3. **Configure:** Escolha as colunas e opções
+            4. **Gere:** Clique no botão para criar o gráfico
+            
+            **Tipos de gráficos disponíveis:**
+            - **Linha:** Para tendências temporais
+            - **Barra:** Para comparações entre categorias
+            - **Scatter:** Para correlações entre variáveis
+            - **Box Plot:** Para análise de distribuição
+            - **Histograma:** Para frequência de valores
+            - **Pareto:** Para análise 80/20
+            """)
+
+# ========================= RESUMO E FOOTER =========================
 
 st.divider()
 st.header("📊 Resumo da Fase Measure")
@@ -1763,6 +2056,7 @@ st.header("📊 Resumo da Fase Measure")
 if 'project_data' in st.session_state:
     project_data = st.session_state.project_data
     
+    # Métricas principais
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -1771,40 +2065,79 @@ if 'project_data' in st.session_state:
     
     with col2:
         if project_data.get('baseline_value'):
-            st.metric("Baseline", f"{project_data['baseline_value']:.2f}")
+            baseline = project_data['baseline_value']
+            st.metric("Baseline", f"{baseline:.2f}")
+        else:
+            st.metric("Baseline", "Não definido")
     
     with col3:
         if project_data.get('target_value'):
-            st.metric("Meta", f"{project_data['target_value']:.2f}")
+            target = project_data['target_value']
+            st.metric("Meta", f"{target:.2f}")
+        else:
+            st.metric("Meta", "Não definida")
     
     with col4:
-        st.metric("Status", "Em andamento")
+        status = "Em andamento"
+        st.metric("Status", status)
     
+    st.divider()
+    
+    # Checklist
     st.subheader("✅ Checklist da Fase Measure")
     
-    col1, col2 = st.columns(2)
+    col_check1, col_check2 = st.columns(2)
     
-    with col1:
-        st.write("**Atividades Principais:**")
+    with col_check1:
+        st.markdown("**Atividades Principais:**")
+        
         checks = {
             "Plano de Coleta definido": plans_count > 0,
             "MSA realizado": 'msa_data' in st.session_state,
             "Dados do processo coletados": 'process_data' in st.session_state,
-            "Capacidade calculada": False
+            "Capacidade calculada": 'capability_results' in st.session_state
         }
         
         for item, done in checks.items():
             if done:
-                st.write(f"✅ {item}")
+                st.success(f"✅ {item}")
             else:
-                st.write(f"⬜ {item}")
+                st.info(f"⬜ {item}")
     
-    with col2:
-        st.write("**Próximos Passos:**")
+    with col_check2:
+        st.markdown("**Próximos Passos:**")
+        
+        completed = sum(checks.values())
+        total = len(checks)
+        progress = completed / total
+        
+        st.progress(progress, text=f"Progresso: {completed}/{total} ({progress*100:.0f}%)")
+        
         if all(checks.values()):
-            st.success("Fase Measure completa! Prossiga para Analyze.")
+            st.success("🎉 **Fase Measure completa!** Prossiga para Analyze.")
+            
+            if st.button("➡️ Ir para Analyze", type="primary", use_container_width=True):
+                st.switch_page("pages/3_📊_Analyze.py")
         else:
-            st.info("Complete todas as atividades antes de prosseguir.")
+            st.warning("⚠️ Complete todas as atividades antes de prosseguir.")
+            
+            # Mostrar o que falta
+            pending = [item for item, done in checks.items() if not done]
+            if pending:
+                st.write("**Pendente:**")
+                for item in pending:
+                    st.write(f"- {item}")
+
+else:
+    st.info("Selecione um projeto para ver o resumo.")
+
+# Footer
+st.divider()
+st.caption("💡 **Dica:** Garanta que o sistema de medição é confiável antes de coletar dados para análise")
+st.caption("📏 Fase Measure | Green Belt Project Management System")
+
+
+############################################################################################################################################################################################################################################
 
 st.divider()
 st.caption("💡 **Dica:** Garanta que o sistema de medição é confiável antes de coletar dados para análise")
