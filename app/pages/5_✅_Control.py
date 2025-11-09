@@ -2089,67 +2089,71 @@ with tab5:
             💡 **Dica:** O relatório foi otimizado para impressão profissional!
             """)
     
-    with col3:
-        if st.button("📊 Exportar Excel Detalhado", use_container_width=True):
-            with st.spinner("Gerando arquivo Excel..."):
-                try:
-                    # Criar arquivo Excel com múltiplas abas
-                    from io import BytesIO
+with col3:
+    if st.button("📊 Exportar Excel Detalhado", use_container_width=True):
+        with st.spinner("Gerando arquivo Excel..."):
+            try:
+                from io import BytesIO
+                
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        # Aba 1: Resumo
-                        project_info_dict = project_info if project_info else {}
-                        summary_data = {
-                            'Métrica': ['Projeto', 'Líder', 'Sponsor', 'Departamento', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)', 'Progresso (%)', 'Status'],
-                            'Valor': [
-                                project_name,
-                                project_info_dict.get('project_leader', 'N/A'),
-                                project_info_dict.get('project_sponsor', 'N/A'),
-                                project_info_dict.get('department', 'N/A'),
-                                baseline,
-                                target,
-                                current,
-                                f"{improvement:.1f}",
-                                f"{achievement:.0f}",
-                                'Concluído' if achievement >= 90 else 'Em andamento'
-                            ]
-                        }
-                        df_summary = pd.DataFrame(summary_data)
-                        df_summary.to_excel(writer, sheet_name='Resumo', index=False)
-                                                
-                        # Aba 2: Medições (se disponível)
-                        if measurements is not None and len(measurements) > 0:
-                            measurements.to_excel(writer, sheet_name='Medições', index=False)
-                        
-                        # Aba 3: Ações (se disponível)
-                        if actions is not None and len(actions) > 0:
-                            actions.to_excel(writer, sheet_name='Ações', index=False)
-                        
-                        # Aba 4: Controles (se disponível)
-                        if control_plans is not None and len(control_plans) > 0:
-                            control_plans.to_excel(writer, sheet_name='Controles', index=False)
-                        
-                        # Aba 5: VOC (se disponível)
-                        if voc_items is not None and len(voc_items) > 0:
-                            voc_items.to_excel(writer, sheet_name='VOC', index=False)
+                    # Aba 1: Resumo (SEMPRE CRIADA)
+                    project_info_dict = project_info if project_info else {}
+                    summary_data = {
+                        'Métrica': ['Projeto', 'Líder', 'Sponsor', 'Departamento', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)', 'Progresso (%)', 'Status'],
+                        'Valor': [
+                            project_name,
+                            project_info_dict.get('project_leader', 'N/A'),
+                            project_info_dict.get('project_sponsor', 'N/A'),
+                            project_info_dict.get('department', 'N/A'),
+                            baseline,
+                            target,
+                            current,
+                            f"{improvement:.1f}",
+                            f"{achievement:.0f}",
+                            'Concluído' if achievement >= 90 else 'Em andamento'
+                        ]
+                    }
+                    df_summary = pd.DataFrame(summary_data)
+                    df_summary.to_excel(writer, sheet_name='Resumo', index=False)
                     
-                    output.seek(0)
+                    # Aba 2: Medições (se disponível)
+                    if measurements is not None and len(measurements) > 0:
+                        measurements.to_excel(writer, sheet_name='Medições', index=False)
                     
-                    st.download_button(
-                        label="📥 Download Excel Completo",
-                        data=output.getvalue(),
-                        file_name=f"relatorio_excel_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                    # Aba 3: Ações (se disponível)
+                    if actions is not None and len(actions) > 0:
+                        actions.to_excel(writer, sheet_name='Ações', index=False)
                     
-                    st.success("✅ Arquivo Excel gerado com sucesso!")
+                    # Aba 4: Controles (se disponível)
+                    if control_plans is not None and len(control_plans) > 0:
+                        control_plans.to_excel(writer, sheet_name='Controles', index=False)
                     
-                except Exception as e:
-                    st.error(f"❌ Erro ao gerar Excel: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                    # Aba 5: VOC (se disponível)
+                    if voc_items is not None and len(voc_items) > 0:
+                        voc_items.to_excel(writer, sheet_name='VOC', index=False)
+                    
+                    # Aba 6: Lições Aprendidas (se disponível)
+                    if lessons is not None and len(lessons) > 0:
+                        lessons.to_excel(writer, sheet_name='Lições Aprendidas', index=False)
+                
+                output.seek(0)
+                
+                st.download_button(
+                    label="📥 Download Excel Completo",
+                    data=output.getvalue(),  # CORREÇÃO: usar getvalue() em vez de passar o objeto
+                    file_name=f"relatorio_excel_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+                
+                st.success("✅ Arquivo Excel gerado com sucesso!")
+                
+            except Exception as e:
+                st.error(f"❌ Erro ao gerar Excel: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
 
                
 
