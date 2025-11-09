@@ -628,7 +628,9 @@ def create_definitive_ishikawa(problem, categories_filled):
 def load_ishikawa_from_supabase(project_name):
     """Carrega análise Ishikawa salva do Supabase"""
     try:
-        from database import supabase
+        # Importa do mesmo lugar que save_analysis_to_db usa
+        from config import get_supabase_client
+        supabase = get_supabase_client()
         
         response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('tool_name', 'ishikawa').order('created_at', desc=True).limit(1).execute()
         
@@ -638,6 +640,7 @@ def load_ishikawa_from_supabase(project_name):
     except Exception as e:
         st.error(f"Erro ao carregar dados: {str(e)}")
         return None
+
 
 # ==============================================================================
 # INÍCIO DA LÓGICA DA TAB 3
