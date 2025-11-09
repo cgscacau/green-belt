@@ -835,26 +835,28 @@ with tab4:
                 if 'created_at' in lesson:
                     st.caption(f"Documentado em: {pd.to_datetime(lesson['created_at']).strftime('%d/%m/%Y')}")
 
-# ========================= TAB 5: DOCUMENTAÇÃO COMPLETA =========================
+# ========================= TAB 5: DOCUMENTAÇÃO COMPLETA (VERSÃO PREMIUM) =========================
 
 with tab5:
     st.header("📑 Documentação Final do Projeto")
     
-    # Função para gerar relatório HTML completo
-    def generate_html_report(project_name):
-        """Gera relatório HTML completo com todos os dados do projeto"""
+    # Função para gerar relatório HTML COMPLETO E PROFISSIONAL
+    def generate_premium_html_report(project_name):
+        """Gera relatório HTML premium com TODAS as análises salvas"""
         
-        # Buscar TODOS os dados do Supabase
+        # ==================== BUSCAR TODOS OS DADOS ====================
         project_info = load_project_from_db(project_name)
+        
+        # Inicializar variáveis
         voc_items = None
         sipoc_data = None
         measurements = None
-        analyses = None
+        all_analyses = {}
         actions = None
         control_plans = load_control_plans(project_name)
         lessons = load_lessons_learned(project_name)
+        brainstorm_ideas = None
         
-        # Buscar dados adicionais
         if supabase:
             try:
                 # VOC Items
@@ -872,10 +874,14 @@ with tab5:
                 if meas_response.data:
                     measurements = pd.DataFrame(meas_response.data)
                 
-                # Analyses
+                # TODAS AS ANÁLISES (organizar por tipo)
                 analyses_response = supabase.table('analyses').select("*").eq('project_name', project_name).execute()
                 if analyses_response.data:
-                    analyses = pd.DataFrame(analyses_response.data)
+                    for analysis in analyses_response.data:
+                        analysis_type = analysis.get('analysis_type', 'unknown')
+                        if analysis_type not in all_analyses:
+                            all_analyses[analysis_type] = []
+                        all_analyses[analysis_type].append(analysis)
                 
                 # Actions
                 actions_response = supabase.table('improvement_actions').select("*").eq('project_name', project_name).execute()
@@ -885,120 +891,256 @@ with tab5:
                 # Brainstorm Ideas
                 ideas_response = supabase.table('brainstorm_ideas').select("*").eq('project_name', project_name).execute()
                 if ideas_response.data:
-                    ideas = pd.DataFrame(ideas_response.data)
-                else:
-                    ideas = None
+                    brainstorm_ideas = pd.DataFrame(ideas_response.data)
                     
             except Exception as e:
                 st.error(f"Erro ao buscar dados: {str(e)}")
         
-        # Calcular métricas
+        # ==================== CALCULAR MÉTRICAS ====================
         baseline = project_info.get('baseline_value', 100) if project_info else 100
         target = project_info.get('target_value', 80) if project_info else 80
-        current = baseline * 0.85  # Simulado - substituir por valor real dos measurements
+        
+        # Calcular valor atual a partir das medições
+        if measurements is not None and len(measurements) > 0:
+            current = measurements['metric_value'].iloc[-1]
+        else:
+            current = baseline * 0.85  # Simulado
+        
         improvement = ((baseline - current) / baseline * 100) if baseline != 0 else 0
         achievement = ((baseline - current) / (baseline - target) * 100) if baseline != target else 0
         
-        # Gerar gráficos como base64
+        # ==================== GERAR GRÁFICOS ====================
         import plotly.graph_objects as go
-        import base64
-        from io import BytesIO
+        from plotly.subplots import make_subplots
         
-        # Gráfico de progresso
+        # 1. GRÁFICO DE PROGRESSO (GAUGE)
         fig_progress = go.Figure(go.Indicator(
             mode = "gauge+number+delta",
             value = achievement,
             domain = {'x': [0, 1], 'y': [0, 1]},
-            title = {'text': "Progresso da Meta (%)"},
-            delta = {'reference': 100},
+            title = {'text': "Progresso da Meta (%)", 'font': {'size': 24}},
+            delta = {'reference': 100, 'increasing': {'color': "green"}},
             gauge = {
-                'axis': {'range': [None, 100]},
-                'bar': {'color': "darkgreen" if achievement >= 90 else "orange"},
+                'axis': {'range': [None, 120], 'tickwidth': 1, 'tickcolor': "darkblue"},
+                'bar': {'color': "darkgreen" if achievement >= 90 else "orange" if achievement >= 50 else "red"},
+                'bgcolor': "white",
+                'borderwidth': 2,
+                'bordercolor': "gray",
                 'steps': [
-                    {'range': [0, 50], 'color': "lightgray"},
-                    {'range': [50, 90], 'color': "gray"}
+                    {'range': [0, 50], 'color': '#ffcccc'},
+                    {'range': [50, 90], 'color': '#ffffcc'},
+                    {'range': [90, 120], 'color': '#ccffcc'}
                 ],
                 'threshold': {
                     'line': {'color': "red", 'width': 4},
                     'thickness': 0.75,
-                    'value': 90
+                    'value': 100
                 }
             }
         ))
-        fig_progress.update_layout(height=300)
-        
-        # Converter gráfico para HTML
+        fig_progress.update_layout(height=400, font={'size': 16})
         progress_html = fig_progress.to_html(include_plotlyjs='cdn', div_id="progress-chart")
         
-        # Gráfico de tendência
+        # 2. GRÁFICO DE TENDÊNCIA
         if measurements is not None and len(measurements) > 0:
             fig_trend = go.Figure()
+            
+            # Linha de medições
             fig_trend.add_trace(go.Scatter(
                 x=pd.to_datetime(measurements['measurement_date']),
                 y=measurements['metric_value'],
                 mode='lines+markers',
                 name='Medições',
-                line=dict(color='blue', width=2)
+                line=dict(color='#3498db', width=3),
+                marker=dict(size=8)
             ))
-            fig_trend.add_hline(y=target, line_dash="dash", line_color="green", annotation_text=f"Meta: {target}")
-            fig_trend.add_hline(y=baseline, line_dash="dash", line_color="red", annotation_text=f"Baseline: {baseline}")
+            
+            # Linhas de referência
+            fig_trend.add_hline(y=target, line_dash="dash", line_color="green", 
+                               annotation_text=f"Meta: {target}", line_width=2)
+            fig_trend.add_hline(y=baseline, line_dash="dash", line_color="red", 
+                               annotation_text=f"Baseline: {baseline}", line_width=2)
+            
+            # Área de melhoria
+            fig_trend.add_hrect(y0=target, y1=baseline, fillcolor="yellow", opacity=0.1, 
+                               annotation_text="Zona de Melhoria", annotation_position="top left")
+            
             fig_trend.update_layout(
-                title="Evolução do Indicador",
+                title="Evolução do Indicador ao Longo do Tempo",
                 xaxis_title="Data",
                 yaxis_title=project_info.get('primary_metric', 'Métrica') if project_info else 'Métrica',
-                height=400
+                height=500,
+                hovermode='x unified'
             )
             trend_html = fig_trend.to_html(include_plotlyjs=False, div_id="trend-chart")
         else:
-            trend_html = "<p>Dados de tendência não disponíveis</p>"
+            trend_html = "<p class='warning'>Dados de tendência não disponíveis</p>"
         
-        # Gráfico de Pareto se houver análise
+        # 3. DASHBOARD DE ANÁLISES (quantas análises de cada tipo)
+        analysis_summary = {k: len(v) for k, v in all_analyses.items()}
+        
+        if analysis_summary:
+            fig_analyses = go.Figure(data=[
+                go.Bar(
+                    x=list(analysis_summary.keys()),
+                    y=list(analysis_summary.values()),
+                    marker_color=['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#34495e'][:len(analysis_summary)],
+                    text=list(analysis_summary.values()),
+                    textposition='auto',
+                )
+            ])
+            fig_analyses.update_layout(
+                title="Análises Realizadas por Tipo",
+                xaxis_title="Tipo de Análise",
+                yaxis_title="Quantidade",
+                height=400
+            )
+            analyses_dashboard_html = fig_analyses.to_html(include_plotlyjs=False, div_id="analyses-dashboard")
+        else:
+            analyses_dashboard_html = ""
+        
+        # 4. GRÁFICO DE PARETO (se existir)
         pareto_html = ""
-        if analyses is not None and len(analyses) > 0:
-            pareto_analyses = analyses[analyses['analysis_type'] == 'pareto']
-            if len(pareto_analyses) > 0:
-                try:
-                    pareto_data = pareto_analyses.iloc[0]['results']
-                    if 'data' in pareto_data:
-                        df_pareto = pd.DataFrame(pareto_data['data'])
-                        
-                        fig_pareto = go.Figure()
-                        fig_pareto.add_trace(go.Bar(
-                            x=df_pareto.get('Categoria', []),
-                            y=df_pareto.get('Frequência', df_pareto.get('Valor', [])),
-                            name='Frequência',
-                            marker_color='lightblue'
-                        ))
-                        
-                        if 'Acumulado' in df_pareto.columns:
-                            fig_pareto.add_trace(go.Scatter(
-                                x=df_pareto.get('Categoria', []),
-                                y=df_pareto['Acumulado'],
-                                name='% Acumulado',
-                                yaxis='y2',
-                                line=dict(color='red'),
-                                mode='lines+markers'
-                            ))
-                            
-                        fig_pareto.update_layout(
-                            title="Análise de Pareto",
-                            yaxis2=dict(overlaying='y', side='right', range=[0, 100]),
-                            height=400
+        if 'pareto' in all_analyses:
+            try:
+                pareto_data = all_analyses['pareto'][0].get('results') or all_analyses['pareto'][0].get('data')
+                if pareto_data and 'data' in pareto_data:
+                    df_pareto = pd.DataFrame(pareto_data['data'])
+                    
+                    fig_pareto = make_subplots(specs=[[{"secondary_y": True}]])
+                    
+                    fig_pareto.add_trace(
+                        go.Bar(x=df_pareto.get('Categoria', []), 
+                              y=df_pareto.get('Frequência', df_pareto.get('Valor', [])),
+                              name='Frequência',
+                              marker_color='lightblue'),
+                        secondary_y=False
+                    )
+                    
+                    if 'Acumulado' in df_pareto.columns:
+                        fig_pareto.add_trace(
+                            go.Scatter(x=df_pareto.get('Categoria', []), 
+                                      y=df_pareto['Acumulado'],
+                                      name='% Acumulado',
+                                      line=dict(color='red', width=3),
+                                      mode='lines+markers'),
+                            secondary_y=True
                         )
-                        pareto_html = fig_pareto.to_html(include_plotlyjs=False, div_id="pareto-chart")
-                except:
-                    pareto_html = ""
+                    
+                    fig_pareto.update_layout(title="Análise de Pareto - Principais Causas", height=500)
+                    fig_pareto.update_yaxes(title_text="Frequência", secondary_y=False)
+                    fig_pareto.update_yaxes(title_text="% Acumulado", range=[0, 100], secondary_y=True)
+                    
+                    pareto_html = fig_pareto.to_html(include_plotlyjs=False, div_id="pareto-chart")
+            except:
+                pass
         
-        # Template HTML
+        # 5. GRÁFICO DE REGRESSÃO (se existir)
+        regression_html = ""
+        if 'regression' in all_analyses:
+            try:
+                reg_data = all_analyses['regression'][0].get('results') or all_analyses['regression'][0].get('data')
+                if reg_data:
+                    fig_reg = go.Figure()
+                    
+                    # Scatter plot
+                    fig_reg.add_trace(go.Scatter(
+                        x=reg_data['x_values'],
+                        y=reg_data['y_values'],
+                        mode='markers',
+                        name='Dados',
+                        marker=dict(size=8, color='blue', opacity=0.6)
+                    ))
+                    
+                    # Linha de regressão
+                    fig_reg.add_trace(go.Scatter(
+                        x=reg_data['x_values'],
+                        y=reg_data['y_pred'],
+                        mode='lines',
+                        name='Regressão',
+                        line=dict(color='red', width=3)
+                    ))
+                    
+                    fig_reg.update_layout(
+                        title=f"Regressão Linear: {reg_data.get('y_var', 'Y')} vs {reg_data.get('x_var', 'X')}",
+                        xaxis_title=reg_data.get('x_var', 'X'),
+                        yaxis_title=reg_data.get('y_var', 'Y'),
+                        height=500
+                    )
+                    
+                    regression_html = f"""
+                    <div class="chart-container">
+                        {fig_reg.to_html(include_plotlyjs=False, div_id="regression-chart")}
+                        <div class="info">
+                            <strong>Equação:</strong> {reg_data.get('equation', 'N/A')}<br>
+                            <strong>R²:</strong> {reg_data.get('r2', 0):.4f} | 
+                            <strong>RMSE:</strong> {reg_data.get('rmse', 0):.4f}
+                        </div>
+                    </div>
+                    """
+            except:
+                pass
+        
+        # 6. GRÁFICO ISHIKAWA (Resumo visual)
+        ishikawa_html = ""
+        if '5_whys' in all_analyses or 'ishikawa' in all_analyses:
+            analysis_key = '5_whys' if '5_whys' in all_analyses else 'ishikawa'
+            try:
+                ishikawa_data = all_analyses[analysis_key][0].get('results') or all_analyses[analysis_key][0].get('data')
+                if ishikawa_data:
+                    ishikawa_html = f"""
+                    <div class="section-ishikawa">
+                        <h3>🐟 Análise de Causa Raiz (Ishikawa / 5 Porquês)</h3>
+                        <div class="ishikawa-summary">
+                            <p><strong>Problema:</strong> {ishikawa_data.get('problem', 'N/A')}</p>
+                            <p><strong>Causa Raiz Identificada:</strong> {ishikawa_data.get('root_cause', 'N/A')}</p>
+                        </div>
+                    </div>
+                    """
+            except:
+                pass
+        
+        # 7. GRÁFICO FMEA (Top riscos)
+        fmea_html = ""
+        if 'fmea' in all_analyses:
+            try:
+                fmea_data = all_analyses['fmea'][0].get('results') or all_analyses['fmea'][0].get('data')
+                if fmea_data and 'fmea_items' in fmea_data:
+                    fmea_items = fmea_data['fmea_items']
+                    df_fmea = pd.DataFrame(fmea_items)
+                    df_fmea_top = df_fmea.nlargest(10, 'rpn')
+                    
+                    fig_fmea = go.Figure(data=[
+                        go.Bar(
+                            x=df_fmea_top['process_step'],
+                            y=df_fmea_top['rpn'],
+                            marker_color=['red' if r >= 100 else 'orange' if r >= 50 else 'green' for r in df_fmea_top['rpn']],
+                            text=df_fmea_top['rpn'],
+                            textposition='auto'
+                        )
+                    ])
+                    fig_fmea.update_layout(
+                        title="FMEA - Top 10 Riscos por RPN",
+                        xaxis_title="Processo",
+                        yaxis_title="RPN",
+                        height=400
+                    )
+                    fmea_html = fig_fmea.to_html(include_plotlyjs=False, div_id="fmea-chart")
+            except:
+                pass
+        
+        # ==================== TEMPLATE HTML PREMIUM ====================
         html_template = f"""
         <!DOCTYPE html>
         <html lang="pt-BR">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Relatório Green Belt - {project_name}</title>
+            <title>Relatório Green Belt Premium - {project_name}</title>
             <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
             <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+                
                 * {{
                     margin: 0;
                     padding: 0;
@@ -1006,119 +1148,186 @@ with tab5:
                 }}
                 
                 body {{
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    font-family: 'Inter', 'Segoe UI', sans-serif;
                     line-height: 1.6;
-                    color: #333;
+                    color: #2c3e50;
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     padding: 20px;
                 }}
                 
                 .container {{
-                    max-width: 1200px;
+                    max-width: 1400px;
                     margin: 0 auto;
                     background: white;
-                    border-radius: 15px;
-                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    border-radius: 20px;
+                    box-shadow: 0 25px 70px rgba(0,0,0,0.4);
                     overflow: hidden;
                 }}
                 
                 header {{
-                    background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+                    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
                     color: white;
-                    padding: 40px;
+                    padding: 60px 40px;
                     text-align: center;
+                    position: relative;
+                    overflow: hidden;
+                }}
+                
+                header::before {{
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: -50%;
+                    width: 200%;
+                    height: 200%;
+                    background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+                    animation: pulse 15s ease-in-out infinite;
+                }}
+                
+                @keyframes pulse {{
+                    0%, 100% {{ transform: scale(1); }}
+                    50% {{ transform: scale(1.1); }}
                 }}
                 
                 h1 {{
-                    font-size: 2.5em;
-                    margin-bottom: 10px;
-                    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+                    font-size: 3em;
+                    margin-bottom: 15px;
+                    text-shadow: 2px 2px 8px rgba(0,0,0,0.3);
+                    font-weight: 700;
+                    position: relative;
+                    z-index: 1;
                 }}
                 
                 .subtitle {{
-                    font-size: 1.2em;
-                    opacity: 0.9;
+                    font-size: 1.4em;
+                    opacity: 0.95;
+                    font-weight: 300;
+                    position: relative;
+                    z-index: 1;
+                }}
+                
+                .header-meta {{
+                    margin-top: 30px;
+                    display: flex;
+                    justify-content: center;
+                    gap: 40px;
+                    flex-wrap: wrap;
+                    position: relative;
+                    z-index: 1;
+                }}
+                
+                .header-meta span {{
+                    background: rgba(255,255,255,0.2);
+                    padding: 10px 20px;
+                    border-radius: 25px;
+                    backdrop-filter: blur(10px);
                 }}
                 
                 .content {{
-                    padding: 40px;
+                    padding: 50px;
                 }}
                 
                 .section {{
-                    margin-bottom: 40px;
-                    padding: 25px;
-                    background: #f8f9fa;
-                    border-radius: 10px;
-                    border-left: 5px solid #3498db;
+                    margin-bottom: 50px;
+                    padding: 35px;
+                    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+                    border-radius: 15px;
+                    border-left: 6px solid #3498db;
+                    box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+                    transition: transform 0.3s, box-shadow 0.3s;
+                }}
+                
+                .section:hover {{
+                    transform: translateY(-5px);
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
                 }}
                 
                 h2 {{
-                    color: #2c3e50;
-                    margin-bottom: 20px;
-                    padding-bottom: 10px;
-                    border-bottom: 2px solid #3498db;
+                    color: #1e3c72;
+                    margin-bottom: 25px;
+                    padding-bottom: 15px;
+                    border-bottom: 3px solid #3498db;
+                    font-size: 2em;
+                    font-weight: 700;
                 }}
                 
                 h3 {{
-                    color: #34495e;
-                    margin: 20px 0 15px 0;
+                    color: #2c3e50;
+                    margin: 30px 0 20px 0;
+                    font-size: 1.5em;
+                    font-weight: 600;
                 }}
                 
                 .metrics {{
                     display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                    gap: 20px;
-                    margin: 20px 0;
+                    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                    gap: 25px;
+                    margin: 30px 0;
                 }}
                 
                 .metric-card {{
                     background: white;
-                    padding: 20px;
-                    border-radius: 10px;
-                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                    padding: 25px;
+                    border-radius: 15px;
+                    box-shadow: 0 8px 20px rgba(0,0,0,0.1);
                     text-align: center;
-                    transition: transform 0.3s;
+                    transition: transform 0.3s, box-shadow 0.3s;
+                    border-top: 4px solid #3498db;
                 }}
                 
                 .metric-card:hover {{
-                    transform: translateY(-5px);
-                    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+                    transform: translateY(-8px) scale(1.02);
+                    box-shadow: 0 15px 35px rgba(0,0,0,0.2);
                 }}
                 
                 .metric-value {{
-                    font-size: 2em;
-                    font-weight: bold;
+                    font-size: 2.5em;
+                    font-weight: 700;
                     color: #3498db;
-                    margin: 10px 0;
+                    margin: 15px 0;
+                    text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
                 }}
                 
                 .metric-label {{
                     color: #7f8c8d;
-                    font-size: 0.9em;
+                    font-size: 0.95em;
                     text-transform: uppercase;
-                    letter-spacing: 1px;
+                    letter-spacing: 1.5px;
+                    font-weight: 600;
+                }}
+                
+                .chart-container {{
+                    margin: 35px 0;
+                    padding: 25px;
+                    background: white;
+                    border-radius: 15px;
+                    box-shadow: 0 8px 25px rgba(0,0,0,0.1);
                 }}
                 
                 table {{
                     width: 100%;
-                    border-collapse: collapse;
-                    margin: 20px 0;
+                    border-collapse: separate;
+                    border-spacing: 0;
+                    margin: 25px 0;
                     background: white;
-                    border-radius: 8px;
+                    border-radius: 12px;
                     overflow: hidden;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
                 }}
                 
                 th {{
-                    background: #3498db;
+                    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
                     color: white;
-                    padding: 12px;
+                    padding: 15px;
                     text-align: left;
                     font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    font-size: 0.9em;
                 }}
                 
                 td {{
-                    padding: 12px;
+                    padding: 15px;
                     border-bottom: 1px solid #ecf0f1;
                 }}
                 
@@ -1126,105 +1335,103 @@ with tab5:
                     background: #f8f9fa;
                 }}
                 
+                tr:last-child td {{
+                    border-bottom: none;
+                }}
+                
                 .success {{
-                    background: #d4edda;
+                    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
                     color: #155724;
-                    padding: 15px;
-                    border-radius: 5px;
-                    border-left: 5px solid #28a745;
-                    margin: 20px 0;
+                    padding: 20px;
+                    border-radius: 10px;
+                    border-left: 6px solid #28a745;
+                    margin: 25px 0;
+                    box-shadow: 0 3px 10px rgba(40, 167, 69, 0.2);
                 }}
                 
                 .warning {{
-                    background: #fff3cd;
+                    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
                     color: #856404;
-                    padding: 15px;
-                    border-radius: 5px;
-                    border-left: 5px solid #ffc107;
-                    margin: 20px 0;
+                    padding: 20px;
+                    border-radius: 10px;
+                    border-left: 6px solid #ffc107;
+                    margin: 25px 0;
+                    box-shadow: 0 3px 10px rgba(255, 193, 7, 0.2);
                 }}
                 
                 .info {{
-                    background: #d1ecf1;
+                    background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
                     color: #0c5460;
-                    padding: 15px;
-                    border-radius: 5px;
-                    border-left: 5px solid #17a2b8;
-                    margin: 20px 0;
-                }}
-                
-                .chart-container {{
-                    margin: 30px 0;
                     padding: 20px;
-                    background: white;
                     border-radius: 10px;
-                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                    border-left: 6px solid #17a2b8;
+                    margin: 25px 0;
+                    box-shadow: 0 3px 10px rgba(23, 162, 184, 0.2);
                 }}
                 
                 .timeline {{
                     position: relative;
-                    padding: 20px 0;
+                    padding: 25px 0;
                 }}
                 
                 .timeline-item {{
-                    padding: 20px 30px;
+                    padding: 25px 35px;
                     background: white;
-                    border-radius: 10px;
-                    margin-bottom: 20px;
-                    border-left: 3px solid #3498db;
-                    box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+                    border-radius: 12px;
+                    margin-bottom: 25px;
+                    border-left: 4px solid #3498db;
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                    transition: transform 0.3s;
+                }}
+                
+                .timeline-item:hover {{
+                    transform: translateX(10px);
+                    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
                 }}
                 
                 .badge {{
                     display: inline-block;
-                    padding: 5px 10px;
-                    border-radius: 20px;
+                    padding: 6px 14px;
+                    border-radius: 25px;
                     font-size: 0.85em;
-                    font-weight: bold;
+                    font-weight: 600;
                     margin-right: 10px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
                 }}
                 
-                .badge-success {{
-                    background: #28a745;
-                    color: white;
-                }}
-                
-                .badge-warning {{
-                    background: #ffc107;
-                    color: #333;
-                }}
-                
-                .badge-info {{
-                    background: #17a2b8;
-                    color: white;
-                }}
-                
-                .badge-danger {{
-                    background: #dc3545;
-                    color: white;
-                }}
+                .badge-success {{ background: #28a745; color: white; }}
+                .badge-warning {{ background: #ffc107; color: #333; }}
+                .badge-info {{ background: #17a2b8; color: white; }}
+                .badge-danger {{ background: #dc3545; color: white; }}
                 
                 footer {{
-                    background: #2c3e50;
+                    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
                     color: white;
                     text-align: center;
-                    padding: 20px;
-                    margin-top: 40px;
+                    padding: 30px;
+                    margin-top: 50px;
+                }}
+                
+                .dashboard-grid {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+                    gap: 30px;
+                    margin: 30px 0;
                 }}
                 
                 @media print {{
-                    body {{
-                        background: white;
-                        padding: 0;
-                    }}
-                    
-                    .container {{
-                        box-shadow: none;
-                    }}
-                    
-                    .section {{
-                        page-break-inside: avoid;
-                    }}
+                    body {{ background: white; padding: 0; }}
+                    .container {{ box-shadow: none; }}
+                    .section {{ page-break-inside: avoid; }}
+                    .metric-card {{ box-shadow: none; border: 1px solid #ddd; }}
+                }}
+                
+                @media (max-width: 768px) {{
+                    .metrics {{ grid-template-columns: 1fr; }}
+                    .dashboard-grid {{ grid-template-columns: 1fr; }}
+                    h1 {{ font-size: 2em; }}
+                    .content {{ padding: 25px; }}
                 }}
             </style>
         </head>
@@ -1233,408 +1440,15 @@ with tab5:
                 <header>
                     <h1>🏆 Relatório Final - Projeto Green Belt</h1>
                     <div class="subtitle">{project_name}</div>
-                    <div style="margin-top: 20px;">
-                        <span style="margin: 0 15px;">📅 {datetime.now().strftime('%d/%m/%Y')}</span>
-                        <span style="margin: 0 15px;">👤 {project_info.get('project_leader', 'N/A') if project_info else 'N/A'}</span>
-                        <span style="margin: 0 15px;">🏢 {project_info.get('project_sponsor', 'N/A') if project_info else 'N/A'}</span>
+                    <div class="header-meta">
+                        <span>📅 {datetime.now().strftime('%d/%m/%Y')}</span>
+                        <span>👤 {project_info.get('project_leader', 'N/A') if project_info else 'N/A'}</span>
+                        <span>🏢 {project_info.get('project_sponsor', 'N/A') if project_info else 'N/A'}</span>
+                        <span>📊 {len(all_analyses)} Análises Realizadas</span>
                     </div>
                 </header>
                 
                 <div class="content">
-                    <!-- Resumo Executivo -->
-                    <div class="section">
-                        <h2>📊 Resumo Executivo</h2>
-                        
-                        <div class="metrics">
-                            <div class="metric-card">
-                                <div class="metric-label">Baseline</div>
-                                <div class="metric-value">{baseline:.1f}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Meta</div>
-                                <div class="metric-value">{target:.1f}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Atual</div>
-                                <div class="metric-value">{current:.1f}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Melhoria</div>
-                                <div class="metric-value">{improvement:.1f}%</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Economia</div>
-                                <div class="metric-value">R$ {project_info.get('expected_savings', 0):,.0f}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Progresso</div>
-                                <div class="metric-value">{achievement:.0f}%</div>
-                            </div>
-                        </div>
-                        
-                        <div class="chart-container">
-                            {progress_html}
-                        </div>
-                        
-                        <div class="{'success' if achievement >= 90 else 'warning'}">
-                            <strong>Status do Projeto:</strong> 
-                            {'✅ Meta Atingida! Projeto concluído com sucesso.' if achievement >= 90 else '⏳ Projeto em andamento. Continue monitorando os resultados.'}
-                        </div>
-                    </div>
-                    
-                    <!-- DEFINE -->
-                    <div class="section">
-                        <h2>📋 DEFINE - Definição do Projeto</h2>
-                        
-                        <h3>Declaração do Problema</h3>
-                        <div class="info">
-                            {project_info.get('problem_statement', 'Não definido') if project_info else 'Não definido'}
-                        </div>
-                        
-                        <h3>Declaração da Meta</h3>
-                        <div class="info">
-                            {project_info.get('goal_statement', 'Não definido') if project_info else 'Não definido'}
-                        </div>
-                        
-                        <h3>Business Case</h3>
-                        <p>{project_info.get('business_case', 'Não definido') if project_info else 'Não definido'}</p>
-                        
-                        <h3>Escopo</h3>
-                        <p>{project_info.get('project_scope', 'Não definido') if project_info else 'Não definido'}</p>
-                        
-                        {'<h3>Voice of Customer (VOC)</h3>' if voc_items is not None else ''}
-                        {f'''
-                        <table>
-                            <tr>
-                                <th>Segmento</th>
-                                <th>Necessidade</th>
-                                <th>Prioridade</th>
-                                <th>CSAT Atual</th>
-                                <th>CSAT Meta</th>
-                            </tr>
-                            {''.join([f"""
-                            <tr>
-                                <td>{row.get('customer_segment', '')}</td>
-                                <td>{row.get('customer_need', '')}</td>
-                                <td><span class="badge badge-{'danger' if row.get('priority') == 'Crítica' else 'warning' if row.get('priority') == 'Alta' else 'info'}">{row.get('priority', '')}</span></td>
-                                <td>{row.get('csat_score', '')}</td>
-                                <td>{row.get('target_csat', '')}</td>
-                            </tr>
-                            """ for _, row in voc_items.iterrows()])}
-                        </table>
-                        ''' if voc_items is not None and len(voc_items) > 0 else '<p>Nenhum VOC cadastrado</p>'}
-                        
-                        {'<h3>SIPOC</h3>' if sipoc_data else ''}
-                        {f'''
-                        <table>
-                            <tr>
-                                <th>Suppliers</th>
-                                <th>Inputs</th>
-                                <th>Process</th>
-                                <th>Outputs</th>
-                                <th>Customers</th>
-                            </tr>
-                            <tr>
-                                <td>{sipoc_data.get('suppliers', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
-                                <td>{sipoc_data.get('inputs', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
-                                <td>{sipoc_data.get('process', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
-                                <td>{sipoc_data.get('outputs', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
-                                <td>{sipoc_data.get('customers', '').replace(chr(10), '<br>') if sipoc_data else ''}</td>
-                            </tr>
-                        </table>
-                        ''' if sipoc_data else ''}
-                    </div>
-                    
-                    <!-- MEASURE -->
-                    <div class="section">
-                        <h2>📏 MEASURE - Medição e Coleta de Dados</h2>
-                        
-                        <div class="chart-container">
-                            <h3>Tendência do Indicador</h3>
-                            {trend_html}
-                        </div>
-                        
-                        {f'''
-                        <h3>Estatísticas do Processo</h3>
-                        <div class="metrics">
-                            <div class="metric-card">
-                                <div class="metric-label">Média</div>
-                                <div class="metric-value">{measurements['metric_value'].mean():.2f}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Desvio Padrão</div>
-                                <div class="metric-value">{measurements['metric_value'].std():.2f}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Mínimo</div>
-                                <div class="metric-value">{measurements['metric_value'].min():.2f}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Máximo</div>
-                                <div class="metric-value">{measurements['metric_value'].max():.2f}</div>
-                            </div>
-                        </div>
-                        ''' if measurements is not None and len(measurements) > 0 else '<p>Dados de medição não disponíveis</p>'}
-                    </div>
-                    
-                    <!-- ANALYZE -->
-                    <div class="section">
-                        <h2>📊 ANALYZE - Análise e Identificação de Causas</h2>
-                        
-                        {pareto_html if pareto_html else ''}
-                        
-                        {f'''
-                        <h3>Análises Realizadas</h3>
-                        <table>
-                            <tr>
-                                <th>Tipo de Análise</th>
-                                <th>Data</th>
-                                <th>Status</th>
-                            </tr>
-                            {''.join([f"""
-                            <tr>
-                                <td>{row.get('analysis_type', '')}</td>
-                                <td>{pd.to_datetime(row.get('created_at', '')).strftime('%d/%m/%Y %H:%M') if row.get('created_at') else ''}</td>
-                                <td><span class="badge badge-success">Concluída</span></td>
-                            </tr>
-                            """ for _, row in analyses.iterrows()])}
-                        </table>
-                        ''' if analyses is not None and len(analyses) > 0 else '<p>Nenhuma análise registrada</p>'}
-                    </div>
-                    
-                    <!-- IMPROVE -->
-                    <div class="section">
-                        <h2>🔧 IMPROVE - Implementação de Melhorias</h2>
-                        
-                        {f'''
-                        <h3>Ações Implementadas</h3>
-                        <div class="timeline">
-                            {''.join([f"""
-                            <div class="timeline-item">
-                                <h4>{row.get('action_title', '')}</h4>
-                                <p>{row.get('description', '')}</p>
-                                <div style="margin-top: 10px;">
-                                    <span class="badge badge-{'success' if row.get('status') == 'Concluído' else 'warning' if row.get('status') == 'Em Andamento' else 'info'}">{row.get('status', '')}</span>
-                                    <span class="badge badge-info">{row.get('responsible', '')}</span>
-                                    <span class="badge badge-{'danger' if row.get('impact_level') == 'Crítico' else 'warning' if row.get('impact_level') == 'Alto' else 'info'}">{row.get('impact_level', '')} Impacto</span>
-                                </div>
-                            </div>
-                            """ for _, row in actions.iterrows()])}
-                        </div>
-                        
-                        <h3>Resumo das Ações</h3>
-                        <div class="metrics">
-                            <div class="metric-card">
-                                <div class="metric-label">Total de Ações</div>
-                                <div class="metric-value">{len(actions)}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Concluídas</div>
-                                <div class="metric-value">{len(actions[actions['status'] == 'Concluído'])}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Em Andamento</div>
-                                <div class="metric-value">{len(actions[actions['status'] == 'Em Andamento'])}</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-label">Taxa de Conclusão</div>
-                                <div class="metric-value">{(len(actions[actions['status'] == 'Concluído']) / len(actions) * 100):.0f}%</div>
-                            </div>
-                        </div>
-                        ''' if actions is not None and len(actions) > 0 else '<p>Nenhuma ação registrada</p>'}
-                    </div>
-                    
-                    <!-- CONTROL -->
-                    <div class="section">
-                        <h2>✅ CONTROL - Controle e Sustentação</h2>
-                        
-                        {f'''
-                        <h3>Plano de Controle</h3>
-                        <table>
-                            <tr>
-                                <th>Item de Controle</th>
-                                <th>Especificação</th>
-                                <th>Método</th>
-                                <th>Frequência</th>
-                                <th>Responsável</th>
-                                <th>Criticidade</th>
-                            </tr>
-                            {''.join([f"""
-                            <tr>
-                                <td>{row.get('control_item', '')}</td>
-                                <td>{row.get('specification', '')}</td>
-                                <td>{row.get('measurement_method', '')}</td>
-                                <td>{row.get('frequency', '')}</td>
-                                <td>{row.get('responsible', '')}</td>
-                                <td><span class="badge badge-{'danger' if row.get('critical_level') == 'Crítica' else 'warning' if row.get('critical_level') == 'Alta' else 'info'}">{row.get('critical_level', '')}</span></td>
-                            </tr>
-                            """ for _, row in control_plans.iterrows()])}
-                        </table>
-                        ''' if control_plans is not None and len(control_plans) > 0 else '<p>Plano de controle não definido</p>'}
-                        
-                        {f'''
-                        <h3>Lições Aprendidas</h3>
-                        {''.join([f"""
-                        <div class="timeline-item">
-                            <h4>{row.get('lesson_type', '')}</h4>
-                            <p><strong>Descrição:</strong> {row.get('description', '')}</p>
-                            <p><strong>Recomendações:</strong> {row.get('recommendations', '')}</p>
-                            <span class="badge badge-info">{row.get('impact', '')} Impacto</span>
-                        </div>
-                        """ for _, row in lessons.iterrows()])}
-                        ''' if lessons is not None and len(lessons) > 0 else '<p>Nenhuma lição aprendida documentada</p>'}
-                    </div>
-                    
-                    <!-- Conclusão -->
-                    <div class="section">
-                        <h2>🎯 Conclusão</h2>
-                        
-                        <div class="{'success' if achievement >= 90 else 'info'}">
-                            <h3>Status Final do Projeto</h3>
-                            <p>
-                                O projeto <strong>{project_name}</strong> 
-                                {'atingiu' if achievement >= 90 else 'está progredindo em direção à'} sua meta de reduzir 
-                                o indicador de {baseline:.1f} para {target:.1f}.
-                            </p>
-                            <p>
-                                <strong>Resultado alcançado:</strong> {current:.1f} 
-                                (melhoria de {improvement:.1f}% em relação ao baseline)
-                            </p>
-                            {f'<p><strong>Economia realizada:</strong> R$ {project_info.get("expected_savings", 0):,.2f}</p>' if project_info and project_info.get("expected_savings") else ''}
-                        </div>
-                        
-                        <h3>Próximos Passos</h3>
-                        <ul>
-                            <li>Continuar monitoramento conforme plano de controle estabelecido</li>
-                            <li>Revisar indicadores mensalmente</li>
-                            <li>Aplicar lições aprendidas em projetos futuros</li>
-                            <li>Compartilhar resultados com a organização</li>
-                            {'<li>Buscar oportunidades de replicação em outras áreas</li>' if achievement >= 90 else '<li>Implementar ações corretivas conforme necessário</li>'}
-                        </ul>
-                    </div>
-                </div>
-                
-                <footer>
-                    <p>Relatório gerado automaticamente pelo Sistema Green Belt</p>
-                    <p>{datetime.now().strftime('%d de %B de %Y às %H:%M')}</p>
-                    <p>© 2024 - Projeto Lean Six Sigma</p>
-                </footer>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return html_template
-    
-    # Interface para gerar relatório
-    st.info("Compile toda a documentação do projeto em um relatório profissional")
-    
-    # Prévia do conteúdo
-    with st.expander("📋 Prévia do Conteúdo do Relatório"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Seções Incluídas:**")
-            st.write("✅ Resumo Executivo com métricas")
-            st.write("✅ Project Charter completo")
-            st.write("✅ VOC e SIPOC")
-            st.write("✅ Dados e gráficos de medição")
-            st.write("✅ Análises realizadas (Pareto, etc)")
-            st.write("✅ Ações de melhoria implementadas")
-            st.write("✅ Plano de controle")
-            st.write("✅ Lições aprendidas")
-        
-        with col2:
-            st.write("**Elementos Visuais:**")
-            st.write("📊 Gráfico de progresso (gauge)")
-            st.write("📈 Gráfico de tendência")
-            st.write("📊 Gráfico de Pareto")
-            st.write("🎨 Design profissional")
-            st.write("📱 Responsivo")
-            st.write("🖨️ Pronto para impressão")
-    
-    st.divider()
-    
-    # Opções de geração
-    st.subheader("🎯 Gerar Relatório Final")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        report_format = st.selectbox(
-            "Formato do Relatório",
-            ["HTML Interativo (Recomendado)", "PDF (via HTML)", "Excel Detalhado"]
-        )
-    
-    with col2:
-        include_charts = st.checkbox("Incluir gráficos interativos", value=True)
-        include_timeline = st.checkbox("Incluir linha do tempo", value=True)
-    
-    # Botões de ação
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("🌐 Gerar HTML", type="primary", use_container_width=True):
-            with st.spinner("Gerando relatório completo..."):
-                try:
-                    html_report = generate_html_report(project_name)
-                    
-                    # Download
-                    st.download_button(
-                        label="📥 Download Relatório HTML",
-                        data=html_report,
-                        file_name=f"relatorio_completo_{project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-                        mime="text/html",
-                        use_container_width=True
-                    )
-                    
-                    st.success("✅ Relatório HTML gerado com sucesso!")
-                    
-                    # Prévia
-                    with st.expander("👁️ Visualizar Relatório"):
-                        st.components.v1.html(html_report, height=800, scrolling=True)
-                        
-                except Exception as e:
-                    st.error(f"Erro ao gerar relatório: {str(e)}")
-    
-    with col2:
-        if st.button("📄 Instruções PDF", use_container_width=True):
-            st.info("""
-            **Para converter HTML em PDF:**
-            1. Abra o arquivo HTML no navegador
-            2. Pressione Ctrl+P (ou Cmd+P no Mac)
-            3. Selecione "Salvar como PDF"
-            4. Ajuste as configurações conforme necessário
-            5. Salve o arquivo
-            
-            O relatório HTML foi otimizado para impressão!
-            """)
-    
-    with col3:
-        if st.button("📊 Versão Simplificada", use_container_width=True):
-            # Versão simplificada em CSV
-            summary_data = {
-                'Métrica': ['Projeto', 'Líder', 'Baseline', 'Meta', 'Atual', 'Melhoria (%)', 'Status'],
-                'Valor': [
-                    project_name,
-                    project_data.get('project_leader', 'N/A'),
-                    baseline,
-                    target,
-                    current,
-                    f"{improvement:.1f}",
-                    'Concluído' if achievement >= 90 else 'Em andamento'
-                ]
-            }
-            
-            df_summary = pd.DataFrame(summary_data)
-            csv = df_summary.to_csv(index=False)
-            
-            st.download_button(
-                label="📥 Download CSV",
-                data=csv,
-                file_name=f"resumo_{project_name}_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
 
 
 # Footer
