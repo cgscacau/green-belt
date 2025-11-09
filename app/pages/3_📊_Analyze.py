@@ -277,321 +277,488 @@ with tabs[0]:
                     if save_analysis_to_db(project_name, "descriptive_statistics", stats_df.to_dict(), "full_descriptive"):
                         st.success("✅ Análise salva!")
 
-# ========================= TAB 2: PARETO (CORRIGIDO) =========================
+##############################################################################################################################################################################################################################################################
+
+# ========================= TAB 2: ANÁLISE DE PARETO (VERSÃO COMPLETA CORRIGIDA) =========================
 with tabs[1]:
     st.header("📈 Análise de Pareto")
+    st.markdown("**Princípio 80/20:** Identifique os poucos vitais que causam a maioria dos problemas")
     
     if data is not None and len(data.columns) > 0:
+        
+        # ============= SELEÇÃO DE COLUNAS =============
         col1, col2 = st.columns([3, 1])
         
         with col1:
             category_col = st.selectbox(
-                "Coluna de categorias:",
+                "📊 Coluna de Categorias:",
                 data.columns,
-                key="pareto_cat_select"
+                key="pareto_cat_select",
+                help="Selecione a coluna que contém as categorias a serem analisadas"
             )
             
             value_col = st.selectbox(
-                "Coluna de valores:",
+                "📈 Coluna de Valores:",
                 ["Contagem"] + list(data.columns),
-                key="pareto_val_select"
+                key="pareto_val_select",
+                help="Selecione 'Contagem' para frequência ou uma coluna numérica para soma"
             )
         
         with col2:
             st.info("""
             **Princípio 80/20:**
-            80% dos efeitos vêm de 20% das causas
+            
+            80% dos efeitos vêm de 20% das causas.
+            
+            Foque nos **Vital Few** para máximo impacto!
             """)
         
-        # Botão para gerar
-        if st.button("🎯 Gerar Pareto", type="primary", key="gen_pareto"):
-            try:
-                # Processar dados com tratamento de erros
-                if value_col == "Contagem":
-                    pareto_data = data[category_col].value_counts().reset_index()
-                    pareto_data.columns = ['Categoria', 'Frequência']
-                    value_column = 'Frequência'
+        st.divider()
+        
+        # ============= VALIDAÇÃO PRÉVIA DOS DADOS =============
+        st.subheader("🔍 Validação dos Dados")
+        
+        col_val1, col_val2, col_val3 = st.columns(3)
+        
+        with col_val1:
+            # Verificar coluna de categoria
+            null_in_cat = data[category_col].isna().sum()
+            none_in_cat = (data[category_col].astype(str) == 'None').sum()
+            empty_in_cat = (data[category_col].astype(str).str.strip() == '').sum()
+            total_invalid = null_in_cat + none_in_cat + empty_in_cat
+            
+            if total_invalid > 0:
+                st.warning(f"⚠️ **{total_invalid}** valores inválidos")
+                st.caption(f"({(total_invalid/len(data)*100):.1f}% dos dados)")
+            else:
+                st.success(f"✅ Dados válidos")
+            
+            st.metric("Total de Linhas", len(data))
+        
+        with col_val2:
+            unique_categories = data[category_col].dropna().nunique()
+            st.metric("Categorias Únicas", unique_categories)
+            
+            if unique_categories == 0:
+                st.error("❌ Nenhuma categoria válida!")
+            elif unique_categories == 1:
+                st.warning("⚠️ Apenas 1 categoria")
+        
+        with col_val3:
+            if value_col != "Contagem":
+                null_in_val = data[value_col].isna().sum()
+                if null_in_val > 0:
+                    st.warning(f"⚠️ {null_in_val} valores nulos")
                 else:
-                    # Verificar se a coluna de valor é numérica
-                    if data[value_col].dtype not in ['int64', 'float64']:
-                        st.error(f"❌ A coluna '{value_col}' não é numérica. Selecione uma coluna numérica ou use 'Contagem'.")
-                        st.info(f"**Tipo da coluna:** {data[value_col].dtype}")
+                    st.success(f"✅ Sem nulos")
+                
+                st.caption(f"Tipo: {data[value_col].dtype}")
+            else:
+                st.info("📊 Modo Contagem")
+                st.caption("Frequência de ocorrências")
+        
+        # Mostrar amostra dos dados
+        with st.expander("👀 Ver Amostra dos Dados (10 primeiras linhas)"):
+            if value_col == "Contagem":
+                sample_df = data[[category_col]].head(10)
+            else:
+                sample_df = data[[category_col, value_col]].head(10)
+            
+            st.dataframe(sample_df, use_container_width=True)
+            
+            # Mostrar estatísticas básicas
+            st.caption("**Estatísticas da coluna de categoria:**")
+            cat_stats = data[category_col].value_counts().head(5)
+            st.write(cat_stats)
+        
+        st.divider()
+        
+        # ============= BOTÃO GERAR PARETO =============
+        if st.button("🎯 Gerar Análise de Pareto", type="primary", use_container_width=True, key="gen_pareto"):
+            
+            with st.spinner("Processando dados e gerando análise..."):
+                try:
+                    # ============= ETAPA 1: LIMPEZA DOS DADOS =============
+                    st.info("🧹 **Etapa 1/4:** Limpando dados...")
+                    
+                    # Criar cópia dos dados
+                    working_data = data.copy()
+                    
+                    # Remover linhas onde a categoria é inválida
+                    original_count = len(working_data)
+                    
+                    working_data = working_data[
+                        (working_data[category_col].notna()) & 
+                        (working_data[category_col].astype(str).str.strip() != '') & 
+                        (working_data[category_col].astype(str) != 'None') &
+                        (working_data[category_col].astype(str) != 'none') &
+                        (working_data[category_col].astype(str) != 'nan')
+                    ]
+                    
+                    removed_count = original_count - len(working_data)
+                    
+                    if removed_count > 0:
+                        st.warning(f"⚠️ {removed_count} linhas removidas por valores inválidos na categoria")
+                    
+                    if len(working_data) == 0:
+                        st.error("❌ Nenhum dado válido após limpeza!")
+                        st.info("""
+                        **Possíveis causas:**
+                        - Todos os valores da coluna de categoria são nulos
+                        - A coluna contém apenas valores vazios ou 'None'
+                        
+                        **Solução:**
+                        - Escolha outra coluna de categoria
+                        - Limpe seus dados antes do upload
+                        """)
                         st.stop()
                     
-                    # Remover NaN e valores não numéricos
-                    clean_data = data[[category_col, value_col]].dropna()
+                    # ============= ETAPA 2: PROCESSAR DADOS =============
+                    st.info("📊 **Etapa 2/4:** Processando dados...")
                     
-                    if len(clean_data) == 0:
-                        st.error("❌ Nenhum dado válido após remover valores nulos")
-                        st.stop()
-                    
-                    # Agrupar e somar
-                    pareto_data = clean_data.groupby(category_col)[value_col].sum().reset_index()
-                    pareto_data.columns = ['Categoria', 'Valor']
-                    value_column = 'Valor'
-                    
-                    # Remover valores zero ou negativos
-                    pareto_data = pareto_data[pareto_data[value_column] > 0]
-                
-                # Verificar se há dados após limpeza
-                if len(pareto_data) == 0:
-                    st.error("❌ Nenhum dado válido para criar o gráfico de Pareto")
-                    st.info("Verifique se há valores positivos nos dados selecionados.")
-                    st.stop()
-                
-                # Ordenar por valor decrescente
-                pareto_data = pareto_data.sort_values(by=value_column, ascending=False).reset_index(drop=True)
-                
-                # Calcular total com verificação
-                total = pareto_data[value_column].sum()
-                
-                if total == 0 or pd.isna(total):
-                    st.error("❌ A soma total dos valores é zero ou inválida")
-                    st.stop()
-                
-                # Calcular percentuais
-                pareto_data['Percentual'] = (pareto_data[value_column] / total) * 100
-                pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
-                
-                # Limitar categorias se houver muitas
-                if len(pareto_data) > 20:
-                    st.warning(f"⚠️ {len(pareto_data)} categorias encontradas. Mostrando apenas as top 20.")
-                    outros_valor = pareto_data.iloc[20:][value_column].sum()
-                    pareto_data = pareto_data.head(20)
-                    
-                    if outros_valor > 0:
-                        # Adicionar categoria "Outros"
-                        outros_row = pd.DataFrame({
-                            'Categoria': ['Outros'],
-                            value_column: [outros_valor],
-                            'Percentual': [(outros_valor / total) * 100],
-                            'Acumulado': [0.0]  # Será recalculado
-                        })
-                        pareto_data = pd.concat([pareto_data, outros_row], ignore_index=True)
-                        # Recalcular acumulado
-                        pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
-                
-                # Validação de dados
-                if len(pareto_data) == 1:
-                    st.warning("⚠️ Apenas uma categoria encontrada. O gráfico de Pareto é mais útil com múltiplas categorias.")
-                    st.info(f"""
-                    **Categoria única encontrada:**
-                    - **{pareto_data.iloc[0]['Categoria']}**: {pareto_data.iloc[0][value_column]:,.0f}
-                    
-                    💡 **Dica:** Verifique se:
-                    1. A coluna de categorias está correta
-                    2. Os dados têm múltiplas categorias
-                    3. Não há problema no agrupamento dos dados
-                    """)
-                
-                # Mostrar preview dos dados
-                with st.expander("🔍 Preview dos Dados Processados"):
-                    st.dataframe(pareto_data, use_container_width=True)
-                
-                # Identificar Vital Few
-                vital_few = pareto_data[pareto_data['Acumulado'] <= 80]
-                if len(vital_few) == 0:
-                    vital_few = pareto_data.head(1)
-                
-                # Criar gráfico
-                fig = go.Figure()
-                
-                # Definir cores - vermelho para vital few, azul claro para o resto
-                colors = ['#E74C3C' if i < len(vital_few) else '#3498DB' for i in range(len(pareto_data))]
-                
-                # Barras
-                fig.add_trace(go.Bar(
-                    x=pareto_data['Categoria'].astype(str),
-                    y=pareto_data[value_column],
-                    name=value_column,
-                    marker_color=colors,
-                    yaxis='y',
-                    text=[f"{v:,.0f}" for v in pareto_data[value_column]],
-                    textposition='outside',
-                    textfont=dict(size=12),
-                    hovertemplate='<b>%{x}</b><br>' +
-                                  f'{value_column}: %{{y:,.0f}}<br>' +
-                                  '<extra></extra>'
-                ))
-                
-                # Linha acumulada
-                fig.add_trace(go.Scatter(
-                    x=pareto_data['Categoria'].astype(str),
-                    y=pareto_data['Acumulado'],
-                    name='% Acumulado',
-                    mode='lines+markers',
-                    line=dict(color='#2ECC71', width=3),
-                    marker=dict(size=10, color='#2ECC71', symbol='diamond'),
-                    yaxis='y2',
-                    text=[f"{v:.1f}%" for v in pareto_data['Acumulado']],
-                    textposition='top center',
-                    textfont=dict(size=11, color='#2ECC71'),
-                    hovertemplate='<b>%{x}</b><br>' +
-                                  '% Acumulado: %{y:.1f}%<br>' +
-                                  '<extra></extra>'
-                ))
-                
-                # Linha 80%
-                fig.add_hline(
-                    y=80, 
-                    line_dash="dash", 
-                    line_color="#F39C12",
-                    line_width=2,
-                    annotation_text="80% (Vital Few)", 
-                    annotation_position="right",
-                    annotation=dict(font_size=12, font_color="#F39C12"),
-                    yref='y2'
-                )
-                
-                # Layout melhorado
-                fig.update_layout(
-                    title={
-                        'text': f"<b>Gráfico de Pareto: {category_col}</b><br><sub>Análise 80/20 - Identificação dos Vital Few</sub>",
-                        'x': 0.5,
-                        'xanchor': 'center',
-                        'font': {'size': 20}
-                    },
-                    xaxis=dict(
-                        title=dict(text="<b>Categorias</b>", font=dict(size=14)),
-                        tickangle=-45,
-                        tickfont=dict(size=11),
-                        showgrid=False
-                    ),
-                    yaxis=dict(
-                        title=dict(text=f"<b>{value_column}</b>", font=dict(size=14)),
-                        side='left',
-                        showgrid=True,
-                        gridcolor='rgba(128, 128, 128, 0.2)',
-                        tickformat=',.0f'
-                    ),
-                    yaxis2=dict(
-                        title=dict(text='<b>% Acumulado</b>', font=dict(size=14)),
-                        overlaying='y',
-                        side='right',
-                        range=[0, 105],
-                        showgrid=False,
-                        ticksuffix='%'
-                    ),
-                    height=600,
-                    hovermode='x unified',
-                    showlegend=True,
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
-                    ),
-                    margin=dict(l=80, r=80, t=120, b=120)
-                )
-                
-                # Adicionar anotação para a primeira barra (mais importante)
-                if len(vital_few) > 0:
-                    fig.add_annotation(
-                        x=pareto_data.iloc[0]['Categoria'],
-                        y=pareto_data.iloc[0][value_column],
-                        text=f"<b>Principal<br>{pareto_data.iloc[0]['Percentual']:.1f}%</b>",
-                        showarrow=True,
-                        arrowhead=2,
-                        arrowsize=1,
-                        arrowwidth=2,
-                        arrowcolor="#E74C3C",
-                        ax=0,
-                        ay=-60,
-                        font=dict(size=12, color='#E74C3C'),
-                        bgcolor='rgba(255,255,255,0.8)',
-                        bordercolor='#E74C3C',
-                        borderwidth=2,
-                        borderpad=4
-                    )
-                
-                st.plotly_chart(fig, use_container_width=True, key="pareto_chart")
-                
-                # Métricas
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total de Categorias", len(pareto_data))
-                with col2:
-                    st.metric("Vital Few (80%)", len(vital_few))
-                with col3:
-                    vital_percentage = (len(vital_few)/len(pareto_data)*100)
-                    st.metric("% dos Vital Few", f"{vital_percentage:.1f}%")
-                
-                # Tabela detalhada
-                st.subheader("📊 Detalhamento")
-                
-                # Formatar a tabela para exibição
-                display_df = pareto_data.copy()
-                display_df['Percentual'] = display_df['Percentual'].round(2).astype(str) + '%'
-                display_df['Acumulado'] = display_df['Acumulado'].round(2).astype(str) + '%'
-                display_df[value_column] = display_df[value_column].round(2)
-                
-                # Destacar vital few
-                def highlight_vital(row):
-                    if row.name < len(vital_few):
-                        return ['background-color: #ffcccc'] * len(row)
-                    return [''] * len(row)
-                
-                styled_df = display_df.style.apply(highlight_vital, axis=1)
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
-                
-                # Insights
-                st.subheader("💡 Insights")
-                
-                top_category = pareto_data.iloc[0]['Categoria']
-                top_value = pareto_data.iloc[0][value_column]
-                top_percent = pareto_data.iloc[0]['Percentual']
-                
-                st.success(f"""
-                **Análise de Pareto:**
-                - A categoria **"{top_category}"** é a mais significativa com {top_value:.2f} ({top_percent:.1f}% do total)
-                - **{len(vital_few)} categorias** representam 80% do impacto total
-                - Isso corresponde a **{vital_percentage:.1f}%** das categorias
-                - **Recomendação:** Foque nas {len(vital_few)} categorias principais para máximo impacto
-                """)
-                
-                # Salvar análise
-                if st.button("💾 Salvar Análise Pareto", key="save_pareto"):
-                    analysis_data = {
-                        'data': pareto_data.to_dict('records'),
-                        'vital_few_count': int(len(vital_few)),
-                        'total_categories': int(len(pareto_data)),
-                        'category_column': str(category_col),
-                        'value_column': str(value_col),
-                        'total_value': float(total),
-                        'vital_few_percentage': float(vital_percentage),
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    
-                    if save_analysis_to_db(project_name, "pareto", analysis_data, "pareto_analysis"):
-                        st.success("✅ Análise salva com sucesso!")
+                    if value_col == "Contagem":
+                        # Modo contagem: contar frequência de cada categoria
+                        pareto_data = working_data[category_col].value_counts().reset_index()
+                        pareto_data.columns = ['Categoria', 'Frequência']
+                        value_column = 'Frequência'
                     else:
-                        st.error("❌ Erro ao salvar análise")
-                
-                # Download CSV
-                csv = pareto_data.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download CSV",
-                    data=csv,
-                    file_name=f"pareto_{category_col}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
-                
-            except Exception as e:
-                st.error(f"❌ Erro ao gerar análise de Pareto: {str(e)}")
-                st.info("Verifique se os dados estão corretos e tente novamente")
-                
-                # Debug info
-                with st.expander("🐛 Informações de Debug"):
-                    st.write("**Tipo de erro:**", type(e).__name__)
-                    st.write("**Mensagem:**", str(e))
-                    if value_col != "Contagem":
-                        st.write(f"**Tipo da coluna {value_col}:**", data[value_col].dtype)
-                        st.write(f"**Primeiros valores de {value_col}:**")
-                        st.write(data[value_col].head())
-                        st.write(f"**Valores únicos em {category_col}:**", data[category_col].nunique())
+                        # Modo soma: verificar se coluna é numérica
+                        if working_data[value_col].dtype not in ['int64', 'float64']:
+                            st.error(f"❌ A coluna '{value_col}' não é numérica!")
+                            st.info(f"**Tipo detectado:** {working_data[value_col].dtype}")
+                            st.info("**Solução:** Selecione uma coluna numérica ou use 'Contagem'")
+                            st.stop()
+                        
+                        # Remover linhas com valores nulos na coluna de valor
+                        working_data = working_data[working_data[value_col].notna()]
+                        
+                        if len(working_data) == 0:
+                            st.error("❌ Nenhum dado válido após remover valores nulos!")
+                            st.stop()
+                        
+                        # Agrupar por categoria e somar valores
+                        pareto_data = working_data.groupby(category_col)[value_col].sum().reset_index()
+                        pareto_data.columns = ['Categoria', 'Valor']
+                        value_column = 'Valor'
+                        
+                        # Remover valores zero ou negativos
+                        pareto_data = pareto_data[pareto_data[value_column] > 0]
+                    
+                    # Verificar se há dados após processamento
+                    if len(pareto_data) == 0:
+                        st.error("❌ Nenhum dado válido após processamento!")
+                        st.stop()
+                    
+                    # Limpar categorias (converter para string e remover espaços)
+                    pareto_data['Categoria'] = pareto_data['Categoria'].astype(str).str.strip()
+                    
+                    # Remover possíveis 'None', 'nan', strings vazias
+                    pareto_data = pareto_data[
+                        (pareto_data['Categoria'] != 'None') &
+                        (pareto_data['Categoria'] != 'nan') &
+                        (pareto_data['Categoria'] != '')
+                    ]
+                    
+                    if len(pareto_data) == 0:
+                        st.error("❌ Todos os dados foram removidos durante a limpeza!")
+                        st.stop()
+                    
+                    # ============= ETAPA 3: CALCULAR PARETO =============
+                    st.info("🧮 **Etapa 3/4:** Calculando análise de Pareto...")
+                    
+                    # Ordenar por valor decrescente
+                    pareto_data = pareto_data.sort_values(by=value_column, ascending=False).reset_index(drop=True)
+                    
+                    # Calcular total
+                    total = pareto_data[value_column].sum()
+                    
+                    if total == 0 or pd.isna(total):
+                        st.error("❌ A soma total é zero ou inválida!")
+                        st.stop()
+                    
+                    # Calcular percentuais
+                    pareto_data['Percentual'] = (pareto_data[value_column] / total) * 100
+                    pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
+                    
+                    # Limitar a 20 categorias se houver muitas
+                    if len(pareto_data) > 20:
+                        st.warning(f"⚠️ {len(pareto_data)} categorias encontradas. Mostrando top 20 + 'Outros'")
+                        
+                        # Calcular "Outros"
+                        outros_valor = pareto_data.iloc[20:][value_column].sum()
+                        pareto_data = pareto_data.head(20)
+                        
+                        if outros_valor > 0:
+                            outros_row = pd.DataFrame({
+                                'Categoria': ['Outros'],
+                                value_column: [outros_valor],
+                                'Percentual': [(outros_valor / total) * 100],
+                                'Acumulado': [0.0]
+                            })
+                            pareto_data = pd.concat([pareto_data, outros_row], ignore_index=True)
+                            pareto_data['Acumulado'] = pareto_data['Percentual'].cumsum()
+                    
+                    # Identificar Vital Few (80%)
+                    vital_few = pareto_data[pareto_data['Acumulado'] <= 80]
+                    if len(vital_few) == 0:
+                        vital_few = pareto_data.head(1)
+                    
+                    # ============= ETAPA 4: CRIAR VISUALIZAÇÃO =============
+                    st.info("📊 **Etapa 4/4:** Criando visualização...")
+                    
+                    st.success("✅ Análise concluída com sucesso!")
+                    st.divider()
+                    
+                    # ============= GRÁFICO DE PARETO =============
+                    st.subheader("📊 Gráfico de Pareto")
+                    
+                    fig = go.Figure()
+                    
+                    # Cores: vermelho para vital few, azul para o resto
+                    colors = ['#E74C3C' if i < len(vital_few) else '#3498DB' for i in range(len(pareto_data))]
+                    
+                    # Barras
+                    fig.add_trace(go.Bar(
+                        x=pareto_data['Categoria'],
+                        y=pareto_data[value_column],
+                        name=value_column,
+                        marker_color=colors,
+                        yaxis='y',
+                        text=[f"{v:,.0f}" for v in pareto_data[value_column]],
+                        textposition='outside',
+                        textfont=dict(size=11),
+                        hovertemplate='<b>%{x}</b><br>' +
+                                      f'{value_column}: %{{y:,.0f}}<br>' +
+                                      '<extra></extra>'
+                    ))
+                    
+                    # Linha acumulada
+                    fig.add_trace(go.Scatter(
+                        x=pareto_data['Categoria'],
+                        y=pareto_data['Acumulado'],
+                        name='% Acumulado',
+                        mode='lines+markers',
+                        line=dict(color='#2ECC71', width=3),
+                        marker=dict(size=10, color='#2ECC71', symbol='diamond'),
+                        yaxis='y2',
+                        text=[f"{v:.1f}%" for v in pareto_data['Acumulado']],
+                        textposition='top center',
+                        textfont=dict(size=10, color='#2ECC71'),
+                        hovertemplate='<b>%{x}</b><br>' +
+                                      '% Acumulado: %{y:.1f}%<br>' +
+                                      '<extra></extra>'
+                    ))
+                    
+                    # Linha 80%
+                    fig.add_hline(
+                        y=80, 
+                        line_dash="dash", 
+                        line_color="#F39C12",
+                        line_width=2,
+                        annotation_text="80% - Vital Few", 
+                        annotation_position="right",
+                        annotation=dict(font_size=12, font_color="#F39C12"),
+                        yref='y2'
+                    )
+                    
+                    # Layout
+                    fig.update_layout(
+                        title={
+                            'text': f"<b>Análise de Pareto: {category_col}</b><br><sub>Identificação dos Vital Few (Poucos Vitais)</sub>",
+                            'x': 0.5,
+                            'xanchor': 'center',
+                            'font': {'size': 18}
+                        },
+                        xaxis=dict(
+                            title=dict(text="<b>Categorias</b>", font=dict(size=13)),
+                            tickangle=-45,
+                            tickfont=dict(size=10)
+                        ),
+                        yaxis=dict(
+                            title=dict(text=f"<b>{value_column}</b>", font=dict(size=13)),
+                            side='left',
+                            showgrid=True,
+                            gridcolor='rgba(128, 128, 128, 0.2)',
+                            tickformat=',.0f'
+                        ),
+                        yaxis2=dict(
+                            title=dict(text='<b>% Acumulado</b>', font=dict(size=13)),
+                            overlaying='y',
+                            side='right',
+                            range=[0, 105],
+                            showgrid=False,
+                            ticksuffix='%'
+                        ),
+                        height=600,
+                        hovermode='x unified',
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        ),
+                        margin=dict(l=80, r=80, t=120, b=120)
+                    )
+                    
+                    # Anotação na primeira barra
+                    if len(vital_few) > 0:
+                        fig.add_annotation(
+                            x=pareto_data.iloc[0]['Categoria'],
+                            y=pareto_data.iloc[0][value_column],
+                            text=f"<b>Principal<br>{pareto_data.iloc[0]['Percentual']:.1f}%</b>",
+                            showarrow=True,
+                            arrowhead=2,
+                            arrowsize=1,
+                            arrowwidth=2,
+                            arrowcolor="#E74C3C",
+                            ax=0,
+                            ay=-60,
+                            font=dict(size=11, color='#E74C3C'),
+                            bgcolor='rgba(255,255,255,0.9)',
+                            bordercolor='#E74C3C',
+                            borderwidth=2,
+                            borderpad=4
+                        )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # ============= MÉTRICAS RESUMO =============
+                    st.divider()
+                    st.subheader("📊 Métricas Principais")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Total de Categorias", len(pareto_data))
+                    
+                    with col2:
+                        st.metric("Vital Few (80%)", len(vital_few))
+                    
+                    with col3:
+                        vital_percentage = (len(vital_few) / len(pareto_data) * 100)
+                        st.metric("% Vital Few", f"{vital_percentage:.1f}%")
+                    
+                    with col4:
+                        st.metric("Valor Total", f"{total:,.0f}")
+                    
+                    # ============= TABELA DETALHADA =============
+                    st.divider()
+                    st.subheader("📋 Tabela Detalhada")
+                    
+                    # Formatar tabela
+                    display_df = pareto_data.copy()
+                    display_df['Percentual'] = display_df['Percentual'].apply(lambda x: f"{x:.2f}%")
+                    display_df['Acumulado'] = display_df['Acumulado'].apply(lambda x: f"{x:.2f}%")
+                    display_df[value_column] = display_df[value_column].apply(lambda x: f"{x:,.2f}")
+                    
+                    # Destacar vital few
+                    def highlight_vital(row):
+                        if row.name < len(vital_few):
+                            return ['background-color: #ffcccc'] * len(row)
+                        return [''] * len(row)
+                    
+                    styled_df = display_df.style.apply(highlight_vital, axis=1)
+                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                    
+                    st.caption("🔴 Linhas destacadas em vermelho = Vital Few (80% do impacto)")
+                    
+                    # ============= INSIGHTS =============
+                    st.divider()
+                    st.subheader("💡 Insights da Análise")
+                    
+                    top_category = pareto_data.iloc[0]['Categoria']
+                    top_value = pareto_data.iloc[0][value_column]
+                    top_percent = pareto_data.iloc[0]['Percentual']
+                    
+                    # Remover vírgulas do top_value se for string
+                    if isinstance(top_value, str):
+                        top_value = float(top_value.replace(',', ''))
+                    
+                    st.success(f"""
+                    **📌 Principais Descobertas:**
+                    
+                    1. **Categoria Principal:** "{top_category}"
+                       - Representa **{top_percent:.1f}%** do total
+                       - Valor: **{top_value:,.0f}**
+                    
+                    2. **Vital Few:** {len(vital_few)} categorias ({vital_percentage:.1f}% do total)
+                       - Representam **80%** do impacto total
+                       - Foque nestas categorias para máximo resultado!
+                    
+                    3. **Trivial Many:** {len(pareto_data) - len(vital_few)} categorias
+                       - Representam apenas **20%** do impacto
+                    
+                    **🎯 Recomendação:**
+                    Concentre esforços de melhoria nas **{len(vital_few)} categorias principais** 
+                    para obter o maior retorno sobre investimento (ROI).
+                    """)
+                    
+                    # ============= AÇÕES =============
+                    st.divider()
+                    col_save, col_export = st.columns(2)
+                    
+                    with col_save:
+                        if st.button("💾 Salvar Análise no Projeto", use_container_width=True, key="save_pareto"):
+                            analysis_data = {
+                                'data': pareto_data.to_dict('records'),
+                                'vital_few_count': int(len(vital_few)),
+                                'total_categories': int(len(pareto_data)),
+                                'category_column': str(category_col),
+                                'value_column': str(value_col),
+                                'total_value': float(total),
+                                'vital_few_percentage': float(vital_percentage),
+                                'removed_rows': int(removed_count),
+                                'timestamp': datetime.now().isoformat()
+                            }
+                            
+                            if save_analysis_to_db(project_name, "pareto", analysis_data, "pareto_analysis"):
+                                st.success("✅ Análise salva com sucesso!")
+                            else:
+                                st.error("❌ Erro ao salvar análise")
+                    
+                    with col_export:
+                        # Preparar CSV
+                        export_df = pareto_data.copy()
+                        csv = export_df.to_csv(index=False).encode('utf-8')
+                        
+                        st.download_button(
+                            label="📥 Download CSV",
+                            data=csv,
+                            file_name=f"pareto_{category_col}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    
+                except Exception as e:
+                    st.error(f"❌ Erro ao gerar análise de Pareto!")
+                    st.error(f"**Erro:** {str(e)}")
+                    
+                    # Debug info
+                    with st.expander("🐛 Informações Técnicas para Debug"):
+                        st.write("**Tipo de erro:**", type(e).__name__)
+                        st.write("**Mensagem completa:**", str(e))
+                        st.write("**Coluna de categoria:**", category_col)
+                        st.write("**Coluna de valor:**", value_col)
+                        
+                        if value_col != "Contagem":
+                            st.write("**Tipo da coluna de valor:**", data[value_col].dtype)
+                            st.write("**Amostra da coluna de valor:**")
+                            st.write(data[value_col].head())
+                        
+                        st.write("**Valores únicos na categoria:**", data[category_col].nunique())
+                        st.write("**Amostra da categoria:**")
+                        st.write(data[category_col].value_counts().head())
+    
     else:
         st.warning("⚠️ Nenhum dado disponível para análise de Pareto")
+        st.info("""
+        **Para usar a Análise de Pareto:**
+        1. Carregue dados na página **Measure**
+        2. Certifique-se de que há pelo menos uma coluna categórica
+        3. Volte aqui para realizar a análise
+        """)
 
 
 ########################################################################################################################################################################################################################################
