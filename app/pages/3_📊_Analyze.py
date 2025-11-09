@@ -3579,6 +3579,10 @@ with tabs[11]:
     if not project_name:
         st.warning("⚠️ Nenhum projeto selecionado.")
         st.stop()
+    # ADICIONE ESTA LINHA - Inicializar contador de formulários
+    if 'fmea_form_counter' not in st.session_state:
+        st.session_state.fmea_form_counter = 0
+
     
     # Botões de gerenciamento (discretos no topo)
     col_btn1, col_btn2, col_btn3, col_btn4, col_space = st.columns([1, 1, 1, 1, 2])
@@ -3640,7 +3644,7 @@ with tabs[11]:
     st.divider()
     
     # Formulário original
-    with st.form("fmea_form"):
+    with st.form(key=f"fmea_form_{st.session_state.fmea_form_counter}"):
         st.subheader("Adicionar Modo de Falha")
         
         col1, col2, col3 = st.columns(3)
@@ -3681,6 +3685,7 @@ with tabs[11]:
                 'recommended_actions': recommended_actions
             })
             
+            st.session_state.fmea_form_counter += 1
             st.success(f"✅ Adicionado! RPN = {rpn}")
             st.rerun()
     
