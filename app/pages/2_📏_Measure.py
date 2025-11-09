@@ -2091,12 +2091,28 @@ if 'project_data' in st.session_state:
     with col_check1:
         st.markdown("**Atividades Principais:**")
         
+        # Verificar se há dados salvos no banco
+        msa_saved = False
+        process_saved = False
+        capability_saved = False
+        
+        if supabase and st.session_state.get('project_name'):
+            try:
+                # Verificar se há dados do processo salvos
+                saved_data = load_process_data(st.session_state.project_name)
+                if saved_data is not None and len(saved_data) > 0:
+                    process_saved = True
+                    msa_saved = True  # Se tem dados, assume que MSA foi feito
+            except:
+                pass
+        
         checks = {
             "Plano de Coleta definido": plans_count > 0,
-            "MSA realizado": 'msa_data' in st.session_state,
-            "Dados do processo coletados": 'process_data' in st.session_state,
+            "MSA realizado": msa_saved or 'msa_data' in st.session_state,
+            "Dados do processo coletados": process_saved or 'process_data' in st.session_state or 'uploaded_data' in st.session_state,
             "Capacidade calculada": 'capability_results' in st.session_state
         }
+
         
         for item, done in checks.items():
             if done:
