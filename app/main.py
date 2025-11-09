@@ -193,6 +193,8 @@ st.divider()
 # Tabs para diferentes visualizações
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Visão Geral", "📈 Dashboard", "📚 Metodologia", "❓ Ajuda"])
 
+# Correção da seção tab1 no arquivo main.py
+
 with tab1:
     st.header("🏠 Visão Geral do Sistema")
     
@@ -203,60 +205,98 @@ with tab1:
         st.subheader("📊 Status das Fases DMAIC")
         
         phases = {
-            "Define": "📋",
-            "Measure": "📏",
-            "Analyze": "📊",
-            "Improve": "🔧",
-            "Control": "✅"
+            "Define": {"icon": "📋", "status": "complete"},
+            "Measure": {"icon": "📏", "status": "in_progress"},
+            "Analyze": {"icon": "📊", "status": "pending"},
+            "Improve": {"icon": "🔧", "status": "pending"},
+            "Control": {"icon": "✅", "status": "pending"}
         }
         
         cols = st.columns(5)
-        for i, (phase, icon) in enumerate(phases.items()):
+        for i, (phase, info) in enumerate(phases.items()):
             with cols[i]:
-                # Verificar status (simplificado - você pode melhorar isso)
-                status = "🟢" if i == 0 else "🔴"  # Por enquanto, só Define está completo
+                status_color = {
+                    "complete": "#4CAF50",
+                    "in_progress": "#FF9800",
+                    "pending": "#9E9E9E"
+                }
+                status_emoji = {
+                    "complete": "✅",
+                    "in_progress": "🔄",
+                    "pending": "⏸️"
+                }
+                
                 st.markdown(f"""
-                <div style="text-align: center; padding: 20px; background: #f0f2f6; border-radius: 10px;">
-                    <h3>{icon}</h3>
-                    <p>{phase}</p>
-                    <p>{status}</p>
+                <div style="
+                    text-align: center; 
+                    padding: 20px; 
+                    background: white; 
+                    border: 2px solid {status_color.get(info['status'], '#9E9E9E')};
+                    border-radius: 10px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                ">
+                    <div style="font-size: 2em; margin-bottom: 10px;">{info['icon']}</div>
+                    <div style="color: #333; font-weight: bold; margin-bottom: 5px;">{phase}</div>
+                    <div style="font-size: 1.2em;">{status_emoji.get(info['status'], '⏸️')}</div>
                 </div>
                 """, unsafe_allow_html=True)
     else:
         st.info("👈 Selecione ou crie um projeto para começar")
         
-        # Cards de início rápido
+        # Cards de início rápido - CORRIGIDO COM CORES LEGÍVEIS
         col1, col2, col3 = st.columns(3)
         
         with col1:
             st.markdown("""
-            <div style="padding: 20px; background: #e3f2fd; border-radius: 10px;">
-                <h3>🆕 Novo Projeto</h3>
-                <p>Inicie um novo projeto Green Belt do zero</p>
+            <div style="
+                padding: 20px; 
+                background: white; 
+                border: 2px solid #2196F3;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            ">
+                <h3 style="color: #2196F3; margin-top: 0;">🆕 Novo Projeto</h3>
+                <p style="color: #666;">Inicie um novo projeto Green Belt do zero</p>
             </div>
             """, unsafe_allow_html=True)
-            if st.button("Criar Projeto", use_container_width=True):
+            if st.button("Criar Projeto", use_container_width=True, key="btn_create"):
                 st.switch_page("pages/1_📋_Define.py")
         
         with col2:
             st.markdown("""
-            <div style="padding: 20px; background: #f3e5f5; border-radius: 10px;">
-                <h3>📂 Projetos Existentes</h3>
-                <p>Continue trabalhando em um projeto em andamento</p>
+            <div style="
+                padding: 20px; 
+                background: white; 
+                border: 2px solid #9C27B0;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            ">
+                <h3 style="color: #9C27B0; margin-top: 0;">📂 Projetos Existentes</h3>
+                <p style="color: #666;">Continue trabalhando em um projeto em andamento</p>
             </div>
             """, unsafe_allow_html=True)
             if projects:
-                st.caption(f"{len(projects)} projetos disponíveis")
+                st.caption(f"📊 {len(projects)} projetos disponíveis")
+            else:
+                st.caption("📊 Nenhum projeto ainda")
         
         with col3:
             st.markdown("""
-            <div style="padding: 20px; background: #e8f5e9; border-radius: 10px;">
-                <h3>📚 Aprender</h3>
-                <p>Conheça a metodologia DMAIC e suas ferramentas</p>
+            <div style="
+                padding: 20px; 
+                background: white; 
+                border: 2px solid #4CAF50;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            ">
+                <h3 style="color: #4CAF50; margin-top: 0;">📚 Aprender</h3>
+                <p style="color: #666;">Conheça a metodologia DMAIC e suas ferramentas</p>
             </div>
             """, unsafe_allow_html=True)
-            if st.button("Ver Metodologia", use_container_width=True):
-                st.session_state.selected_tab = 2
+            if st.button("Ver Metodologia", use_container_width=True, key="btn_learn"):
+                # Mudar para a tab de metodologia
+                st.info("Veja a aba 'Metodologia' acima para mais informações")
+
 
 with tab2:
     st.header("📈 Dashboard Executivo")
