@@ -135,11 +135,11 @@ with st.sidebar:
     st.subheader("📑 Fases DMAIC")
     
     pages = [
-        ("📋 Define", "pages/1_📋_Define.py"),
-        ("📏 Measure", "pages/2_📏_Measure.py"),
-        ("📊 Analyze", "pages/3_📊_Analyze.py"),
-        ("🔧 Improve", "pages/4_🔧_Improve.py"),
-        ("✅ Control", "pages/5_📈_Control.py")
+        ("📋 Define", "1_📋_Define.py"),
+        ("📏 Measure", "2_📏_Measure.py"),
+        ("📊 Analyze", "3_📊_Analyze.py"),
+        ("🔧 Improve", "4_🔧_Improve.py"),
+        ("✅ Control", "5_📈_Control.py")
     ]
     
     for page_name, page_path in pages:
