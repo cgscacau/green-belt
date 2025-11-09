@@ -692,24 +692,26 @@ with tabs[2]:
                 showlegend=False,
                 xaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 12]),
                 yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 10]),
-                height=600,
-                plot_bgcolor='white'
+                height=720,
+                margin=dict(l=40, r=40, t=60, b=40),
+                plot_bgcolor='#F7F9FC',
+                paper_bgcolor='white'
             )
             
             # Espinha principal
             fig.add_trace(go.Scatter(
                 x=[1, 10], y=[5, 5],
                 mode='lines',
-                line=dict(color='black', width=3)
+                line=dict(color='black', width=4)
             ))
             
             # Posições das categorias
             positions = [
-                (2.5, 7.5), (5, 7.5), (7.5, 7.5),
-                (2.5, 2.5), (5, 2.5), (7.5, 2.5)
+                (2.5, 7.4), (5, 7.4), (7.5, 7.4),
+                (2.5, 2.6), (5, 2.6), (7.5, 2.6)
             ]
             
-            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#48C9B0']
+            colors = ['#1E90FF', '#FFA500', '#00B894', '#8E44AD', '#E74C3C', '#2E86C1']
             
             # Adicionar categorias e causas
             for i, (category, causes) in enumerate(categories_filled.items()):
@@ -726,15 +728,16 @@ with tabs[2]:
                     
                     # Nome da categoria
                     fig.add_annotation(
-                        x=x_pos, y=y_pos + (0.3 if y_pos > 5 else -0.3),
+                        x=x_pos, y=y_pos + (0.35 if y_pos > 5 else -0.35),
                         text=f"<b>{category}</b>",
                         showarrow=False,
-                        font=dict(size=11, color=color),
-                        bgcolor='rgba(255,255,255,0.8)'
+                        font=dict(size=13, color=color),
+                        bgcolor='rgba(255,255,255,0.9)',
+                        bordercolor=color, borderwidth=0.5, borderpad=3
                     )
                     
                     # Adicionar causas
-                    for j, cause in enumerate(causes[:6]):  # Limitar visualização
+                    for j, cause in enumerate(causes[:8]):  # Limitar visualização
                         offset = 0.4 * (j + 1)
                         cause_y = y_pos + (offset if y_pos > 5 else -offset)
                         
@@ -751,9 +754,11 @@ with tabs[2]:
                 x=10.5, y=5,
                 text=f"<b>PROBLEMA</b><br>{problem[:50]}",
                 showarrow=False,
-                font=dict(size=12, color='white'),
-                bgcolor='red',
-                borderpad=8
+                font=dict(size=12, color='#1C2833'),
+                bgcolor='rgba(255,255,255,0.85)',
+                bordercolor=color,
+                borderwidth=0.8,        
+                borderpad=4
             )
             
             st.plotly_chart(fig, use_container_width=True)
