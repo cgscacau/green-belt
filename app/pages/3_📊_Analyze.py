@@ -2926,23 +2926,57 @@ with tabs[9]:
     # Botões de carregar e nova análise
     col_load, col_new = st.columns([1, 1])
     
+# VERSÃO CORRIGIDA DO BOTÃO CARREGAR
     with col_load:
         if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_anova"):
             if not supabase:
                 st.error("❌ Conexão com Supabase não disponível.")
             else:
                 try:
-                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'anova_analysis').order('created_at', desc=True).limit(1).execute()
+                    # Buscar com filtros corretos
+                    response = (supabase.table('analyses')
+                               .select('*')
+                               .eq('project_name', project_name)
+                               .eq('analysis_type', 'anova_analysis')
+                               .order('created_at', desc=True)
+                               .limit(1)
+                               .execute())
                     
                     if response.data and len(response.data) > 0:
-                        loaded_data = response.data[0]['results']
-                        st.session_state.anova_results = loaded_data
-                        st.success("✅ Análise ANOVA carregada com sucesso!")
-                        st.rerun()
+                        # Verificar se tem a chave 'results'
+                        if 'results' in response.data[0]:
+                            loaded_data = response.data[0]['results']
+                        elif 'data' in response.data[0]:  # Caso alternativo
+                            loaded_data = response.data[0]['data']
+                        else:
+                            st.error("❌ Estrutura de dados inválida.")
+                            st.json(response.data[0])  # Mostrar estrutura
+                            st.stop()
+                        
+                        # Validar dados carregados
+                        required_keys = ['response_var', 'factor_var', 'f_statistic', 'p_value']
+                        if all(key in loaded_data for key in required_keys):
+                            st.session_state.anova_results = loaded_data
+                            st.success("✅ Análise ANOVA carregada com sucesso!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Dados incompletos ou corrompidos.")
+                            st.write("Chaves encontradas:", list(loaded_data.keys()))
                     else:
                         st.info("ℹ️ Nenhuma análise ANOVA salva encontrada para este projeto.")
+                        
+                        # Sugestão: mostrar análises disponíveis
+                        all_analyses = supabase.table('analyses').select('analysis_type, created_at').eq('project_name', project_name).execute()
+                        if all_analyses.data:
+                            st.write("**Análises disponíveis neste projeto:**")
+                            for item in all_analyses.data:
+                                st.write(f"- {item['analysis_type']} ({item['created_at']})")
+                        
                 except Exception as e:
                     st.error(f"Erro ao carregar dados: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
     
     with col_new:
         if st.button("🆕 Nova Análise", use_container_width=True, key="new_anova"):
