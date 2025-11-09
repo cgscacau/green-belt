@@ -243,6 +243,24 @@ def load_process_data(project_name):
         st.error(f"Erro ao carregar dados do processo: {str(e)}")
         return None
 
+def auto_clean_numeric_columns(df):
+    """Tenta limpar e converter colunas para numérico automaticamente"""
+    df_clean = df.copy()
+    
+    for col in df_clean.columns:
+        # Tentar converter para numérico
+        try:
+            # Remover espaços e vírgulas
+            if df_clean[col].dtype == 'object':
+                df_clean[col] = df_clean[col].astype(str).str.replace(',', '.').str.strip()
+            
+            # Converter para numérico
+            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+        except:
+            pass
+    
+    return df_clean
+
 # ========================= SIDEBAR PARA SELEÇÃO DE PROJETO =========================
 
 with st.sidebar:
@@ -613,6 +631,30 @@ with tab3:
             else:
                 st.error("❌ Formato não suportado")
                 st.stop()
+    # Mostrar preview dos dados
+    st.subheader("📊 Preview dos Dados Carregados")
+    st.dataframe(process_data.head(10), use_container_width=True)
+    
+    # Opção para limpar dados
+    with st.expander("🧹 Limpar Dados (Opcional)"):
+        st.write("**Remover linhas com valores não numéricos em colunas específicas:**")
+        
+        cols_to_clean = st.multiselect(
+            "Selecione colunas para converter/limpar:",
+            process_data.columns.tolist()
+        )
+        
+        if cols_to_clean and st.button("Aplicar Limpeza"):
+            for col in cols_to_clean:
+                # Converter para numérico, substituindo erros por NaN
+                process_data[col] = pd.to_numeric(process_data[col], errors='coerce')
+            
+            # Remover linhas com NaN nas colunas selecionadas
+            process_data = process_data.dropna(subset=cols_to_clean)
+            
+            st.success(f"✅ Dados limpos! {len(process_data)} linhas restantes")
+            st.dataframe(process_data.head(), use_container_width=True)
+            
             
             # Salvar no banco
             if supabase and st.button("💾 Salvar dados do processo", key="save_process"):
@@ -641,6 +683,28 @@ with tab3:
                 
                 with col1:
                     selected_col = st.selectbox("Selecione a variável:", numeric_cols, key="cap_col")
+
+                # Mostrar informações sobre a coluna selecionada
+                if selected_col:
+                    col_data = process_data[selected_col]
+                    
+                    # Tentar converter para numérico
+                    numeric_data = pd.to_numeric(col_data, errors='coerce')
+                    valid_count = numeric_data.notna().sum()
+                    total_count = len(col_data)
+                    
+                    st.info(f"""
+                    **Informações da coluna '{selected_col}':**
+                    - Total de valores: {total_count}
+                    - Valores numéricos válidos: {valid_count}
+                    - Valores inválidos/texto: {total_count - valid_count}
+                    """)
+                    
+                    # Se tiver muitos valores inválidos, avisar
+                    if valid_count < total_count * 0.5:
+                        st.warning("⚠️ Mais de 50% dos valores não são numéricos. Considere limpar os dados antes da análise.")                
+
+                
                 
                 with col2:
                     col_lsl, col_usl = st.columns(2)
@@ -650,7 +714,29 @@ with tab3:
                         usl = st.number_input("USL", value=100.0, key="usl")
                 
                 if selected_col and usl > lsl:
-                    data = process_data[selected_col].dropna()
+                    # Tentar converter para numérico e remover valores inválidos
+                    try:
+                        data = pd.to_numeric(process_data[selected_col], errors='coerce').dropna()
+                        
+                        # Verificar se sobrou algum dado
+                        if len(data) == 0:
+                            st.error("❌ A coluna selecionada não contém valores numéricos válidos")
+                            st.info("💡 Dica: Verifique se a coluna contém apenas números. Textos e valores vazios serão ignorados.")
+                            
+                            # Mostrar amostra dos dados originais
+                            st.write("**Amostra dos dados originais:**")
+                            st.write(process_data[selected_col].head(10))
+                            st.stop()
+                        
+                        # Mostrar quantos valores foram removidos
+                        original_count = len(process_data[selected_col])
+                        valid_count = len(data)
+                        if original_count > valid_count:
+                            st.warning(f"⚠️ {original_count - valid_count} valores não numéricos foram removidos da análise")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Erro ao processar coluna: {str(e)}")
+                        st.stop()
                     
                     # Cálculos de capacidade
                     mean = data.mean()
