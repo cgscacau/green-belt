@@ -1731,9 +1731,45 @@ with tabs[4]:
 
 #######################################################################################################################################################################################################################################################################
 
-# ========================= TAB 6: NORMALIDADE =========================
+# ========================= TAB 6: NORMALIDADE (COM SALVAMENTO) =========================
 with tabs[5]:
     st.header("📐 Testes de Normalidade")
+    
+    # Verificar se há projeto selecionado
+    project_name = st.session_state.get('project_name', None)
+    
+    if not project_name:
+        st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
+        st.stop()
+    
+    # Botões de carregar e nova análise
+    col_load, col_new = st.columns([1, 1])
+    
+    with col_load:
+        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_normality"):
+            if not supabase:
+                st.error("❌ Conexão com Supabase não disponível.")
+            else:
+                try:
+                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'normality_test').order('created_at', desc=True).limit(1).execute()
+                    
+                    if response.data and len(response.data) > 0:
+                        loaded_data = response.data[0]['results']
+                        st.session_state.normality_results = loaded_data
+                        st.success("✅ Análise de normalidade carregada com sucesso!")
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ Nenhuma análise de normalidade salva encontrada para este projeto.")
+                except Exception as e:
+                    st.error(f"Erro ao carregar dados: {str(e)}")
+    
+    with col_new:
+        if st.button("🆕 Nova Análise", use_container_width=True, key="new_normality"):
+            if 'normality_results' in st.session_state:
+                del st.session_state.normality_results
+            st.rerun()
+    
+    st.divider()
     
     if data is not None:
         numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
@@ -1741,87 +1777,334 @@ with tabs[5]:
         if numeric_cols:
             selected_col = st.selectbox("Selecione a variável:", numeric_cols, key="norm_col")
             
-            if st.button("Executar Testes de Normalidade", key="run_normality"):
-                test_data = data[selected_col].dropna()
+            # Botões de ação
+            col_exec, col_save, col_export = st.columns([1, 1, 1])
+            
+            with col_exec:
+                execute_test = st.button("🔄 Executar Testes", key="run_normality", use_container_width=True, type="primary")
+            
+            with col_save:
+                save_test = st.button("💾 Salvar Análise", key="save_normality", use_container_width=True)
+            
+            with col_export:
+                export_test = st.button("📥 Exportar Resultados", key="export_normality", use_container_width=True)
+            
+            # Executar testes
+            current_results = st.session_state.get('normality_results') or {}
+            if execute_test or (current_results.get('variable') == selected_col):
                 
-                # Múltiplos testes
-                tests_results = {}
-                
-                # Shapiro-Wilk
-                if len(test_data) <= 5000:
-                    stat_sw, p_sw = shapiro(test_data)
-                    tests_results['Shapiro-Wilk'] = {'statistic': stat_sw, 'p_value': p_sw}
-                
-                # Kolmogorov-Smirnov
-                stat_ks, p_ks = kstest(test_data, 'norm', args=(test_data.mean(), test_data.std()))
-                tests_results['Kolmogorov-Smirnov'] = {'statistic': stat_ks, 'p_value': p_ks}
-                
-                # Anderson-Darling
-                result_ad = anderson(test_data, dist='norm')
-                tests_results['Anderson-Darling'] = {
-                    'statistic': result_ad.statistic,
-                    'critical_values': dict(zip(result_ad.significance_level, result_ad.critical_values))
-                }
-                
-                # D'Agostino-Pearson
-                stat_dp, p_dp = normaltest(test_data)
-                tests_results["D'Agostino-Pearson"] = {'statistic': stat_dp, 'p_value': p_dp}
-                
-                # Exibir resultados
-                st.subheader("📊 Resultados dos Testes")
-                
-                for test_name, results in tests_results.items():
-                    with st.expander(f"{test_name}"):
-                        if 'p_value' in results:
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("Estatística", f"{results['statistic']:.4f}")
-                            with col2:
-                                st.metric("Valor p", f"{results['p_value']:.4f}")
-                            
-                            if results['p_value'] > 0.05:
-                                st.success("✅ Dados seguem distribuição normal (p > 0.05)")
-                            else:
-                                st.warning("⚠️ Dados NÃO seguem distribuição normal (p ≤ 0.05)")
-                        else:
-                            st.write(f"Estatística: {results['statistic']:.4f}")
-                            st.write("Valores Críticos:", results['critical_values'])
-                
-                # Visualizações
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Histograma com curva normal
-                    fig = go.Figure()
-                    fig.add_trace(go.Histogram(x=test_data, nbinsx=30, name='Dados',
-                                              histnorm='probability density'))
+                if execute_test:
+                    test_data = data[selected_col].dropna()
                     
-                    # Curva normal teórica
-                    x_range = np.linspace(test_data.min(), test_data.max(), 100)
-                    y_normal = stats.norm.pdf(x_range, test_data.mean(), test_data.std())
-                    fig.add_trace(go.Scatter(x=x_range, y=y_normal, mode='lines',
-                                            name='Normal Teórica', line=dict(color='red')))
+                    # Múltiplos testes
+                    tests_results = {}
                     
-                    fig.update_layout(title="Histograma vs Normal")
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # Q-Q Plot
+                    # Shapiro-Wilk
+                    if len(test_data) <= 5000:
+                        stat_sw, p_sw = shapiro(test_data)
+                        tests_results['Shapiro-Wilk'] = {
+                            'statistic': float(stat_sw), 
+                            'p_value': float(p_sw),
+                            'conclusion': 'normal' if p_sw > 0.05 else 'not_normal'
+                        }
+                    else:
+                        tests_results['Shapiro-Wilk'] = {
+                            'note': 'Amostra muito grande (>5000). Use outros testes.'
+                        }
+                    
+                    # Kolmogorov-Smirnov
+                    stat_ks, p_ks = kstest(test_data, 'norm', args=(test_data.mean(), test_data.std()))
+                    tests_results['Kolmogorov-Smirnov'] = {
+                        'statistic': float(stat_ks), 
+                        'p_value': float(p_ks),
+                        'conclusion': 'normal' if p_ks > 0.05 else 'not_normal'
+                    }
+                    
+                    # Anderson-Darling
+                    result_ad = anderson(test_data, dist='norm')
+                    tests_results['Anderson-Darling'] = {
+                        'statistic': float(result_ad.statistic),
+                        'critical_values': {str(k): float(v) for k, v in zip(result_ad.significance_level, result_ad.critical_values)},
+                        'conclusion': 'normal' if result_ad.statistic < result_ad.critical_values[2] else 'not_normal'  # 5% level
+                    }
+                    
+                    # D'Agostino-Pearson
+                    stat_dp, p_dp = normaltest(test_data)
+                    tests_results["D'Agostino-Pearson"] = {
+                        'statistic': float(stat_dp), 
+                        'p_value': float(p_dp),
+                        'conclusion': 'normal' if p_dp > 0.05 else 'not_normal'
+                    }
+                    
+                    # Calcular quantis para Q-Q plot
                     theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, len(test_data)))
                     sample_quantiles = np.sort(test_data)
                     
-                    fig_qq = go.Figure()
-                    fig_qq.add_trace(go.Scatter(x=theoretical_quantiles, y=sample_quantiles,
-                                               mode='markers', name='Dados'))
-                    fig_qq.add_trace(go.Scatter(x=[theoretical_quantiles.min(), theoretical_quantiles.max()],
-                                               y=[theoretical_quantiles.min(), theoretical_quantiles.max()],
-                                               mode='lines', name='Linha de Referência',
-                                               line=dict(color='red', dash='dash')))
+                    # Salvar no session_state
+                    st.session_state.normality_results = {
+                        'variable': selected_col,
+                        'n_samples': int(len(test_data)),
+                        'mean': float(test_data.mean()),
+                        'std': float(test_data.std()),
+                        'median': float(test_data.median()),
+                        'skewness': float(stats.skew(test_data)),
+                        'kurtosis': float(stats.kurtosis(test_data)),
+                        'tests': tests_results,
+                        'data': test_data.tolist(),
+                        'theoretical_quantiles': theoretical_quantiles.tolist(),
+                        'sample_quantiles': sample_quantiles.tolist()
+                    }
+                
+                # Recuperar resultados
+                results = st.session_state.get('normality_results')
+                
+                if results:
+                    # Estatísticas descritivas
+                    st.subheader("📊 Estatísticas Descritivas")
+                    col1, col2, col3, col4, col5 = st.columns(5)
                     
-                    fig_qq.update_layout(title="Q-Q Plot",
-                                        xaxis_title="Quantis Teóricos",
-                                        yaxis_title="Quantis Amostrais")
-                    st.plotly_chart(fig_qq, use_container_width=True)
+                    col1.metric("N", results['n_samples'])
+                    col2.metric("Média", f"{results['mean']:.3f}")
+                    col3.metric("Desvio Padrão", f"{results['std']:.3f}")
+                    col4.metric("Assimetria", f"{results['skewness']:.3f}")
+                    col5.metric("Curtose", f"{results['kurtosis']:.3f}")
+                    
+                    # Interpretação da assimetria e curtose
+                    st.markdown("---")
+                    col_interp1, col_interp2 = st.columns(2)
+                    
+                    with col_interp1:
+                        if abs(results['skewness']) < 0.5:
+                            skew_interp = "✅ **Aproximadamente simétrica**"
+                        elif results['skewness'] > 0:
+                            skew_interp = "⚠️ **Assimetria positiva** (cauda à direita)"
+                        else:
+                            skew_interp = "⚠️ **Assimetria negativa** (cauda à esquerda)"
+                        st.info(f"**Assimetria:** {skew_interp}")
+                    
+                    with col_interp2:
+                        if abs(results['kurtosis']) < 0.5:
+                            kurt_interp = "✅ **Curtose normal (mesocúrtica)**"
+                        elif results['kurtosis'] > 0:
+                            kurt_interp = "⚠️ **Leptocúrtica** (caudas pesadas)"
+                        else:
+                            kurt_interp = "⚠️ **Platicúrtica** (caudas leves)"
+                        st.info(f"**Curtose:** {kurt_interp}")
+                    
+                    # Resultados dos testes
+                    st.markdown("---")
+                    st.subheader("🔍 Resultados dos Testes de Normalidade")
+                    
+                    # Contador de testes que indicam normalidade
+                    normal_count = 0
+                    total_tests = 0
+                    
+                    for test_name, test_results in results['tests'].items():
+                        with st.expander(f"**{test_name}**", expanded=True):
+                            if 'note' in test_results:
+                                st.info(test_results['note'])
+                            elif 'p_value' in test_results:
+                                col1, col2, col3 = st.columns([1, 1, 2])
+                                
+                                with col1:
+                                    st.metric("Estatística", f"{test_results['statistic']:.4f}")
+                                
+                                with col2:
+                                    st.metric("Valor p", f"{test_results['p_value']:.4f}")
+                                
+                                with col3:
+                                    if test_results['conclusion'] == 'normal':
+                                        st.success("✅ **Dados seguem distribuição normal** (p > 0.05)")
+                                        normal_count += 1
+                                    else:
+                                        st.error("❌ **Dados NÃO seguem distribuição normal** (p ≤ 0.05)")
+                                
+                                total_tests += 1
+                            
+                            elif 'critical_values' in test_results:  # Anderson-Darling
+                                st.write(f"**Estatística:** {test_results['statistic']:.4f}")
+                                st.write("**Valores Críticos:**")
+                                
+                                crit_df = pd.DataFrame({
+                                    'Nível de Significância (%)': list(test_results['critical_values'].keys()),
+                                    'Valor Crítico': list(test_results['critical_values'].values())
+                                })
+                                st.dataframe(crit_df, hide_index=True)
+                                
+                                if test_results['conclusion'] == 'normal':
+                                    st.success("✅ **Dados seguem distribuição normal** (estatística < valor crítico 5%)")
+                                    normal_count += 1
+                                else:
+                                    st.error("❌ **Dados NÃO seguem distribuição normal** (estatística ≥ valor crítico 5%)")
+                                
+                                total_tests += 1
+                    
+                    # Conclusão geral
+                    st.markdown("---")
+                    st.subheader("📋 Conclusão Geral")
+                    
+                    if normal_count == total_tests:
+                        st.success(f"✅ **TODOS os testes ({normal_count}/{total_tests}) indicam que os dados seguem distribuição normal.**")
+                    elif normal_count > total_tests / 2:
+                        st.warning(f"⚠️ **MAIORIA dos testes ({normal_count}/{total_tests}) indica normalidade, mas há divergência.**")
+                    else:
+                        st.error(f"❌ **MAIORIA dos testes ({total_tests - normal_count}/{total_tests}) indica que os dados NÃO seguem distribuição normal.**")
+                    
+                    # Visualizações
+                    st.markdown("---")
+                    st.subheader("📈 Visualizações")
+                    
+                    col_viz1, col_viz2 = st.columns(2)
+                    
+                    with col_viz1:
+                        # Histograma com curva normal
+                        fig = go.Figure()
+                        fig.add_trace(go.Histogram(
+                            x=results['data'], 
+                            nbinsx=30, 
+                            name='Dados',
+                            histnorm='probability density',
+                            marker_color='lightblue',
+                            opacity=0.7
+                        ))
+                        
+                        # Curva normal teórica
+                        x_range = np.linspace(min(results['data']), max(results['data']), 100)
+                        y_normal = stats.norm.pdf(x_range, results['mean'], results['std'])
+                        fig.add_trace(go.Scatter(
+                            x=x_range, 
+                            y=y_normal, 
+                            mode='lines',
+                            name='Normal Teórica', 
+                            line=dict(color='red', width=3)
+                        ))
+                        
+                        fig.update_layout(
+                            title=f"Histograma vs Distribuição Normal<br><sub>{results['variable']}</sub>",
+                            xaxis_title=results['variable'],
+                            yaxis_title="Densidade",
+                            height=400
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col_viz2:
+                        # Q-Q Plot
+                        fig_qq = go.Figure()
+                        fig_qq.add_trace(go.Scatter(
+                            x=results['theoretical_quantiles'], 
+                            y=results['sample_quantiles'],
+                            mode='markers', 
+                            name='Dados',
+                            marker=dict(size=6, color='blue', opacity=0.6)
+                        ))
+                        
+                        # Linha de referência
+                        min_val = min(min(results['theoretical_quantiles']), min(results['sample_quantiles']))
+                        max_val = max(max(results['theoretical_quantiles']), max(results['sample_quantiles']))
+                        
+                        fig_qq.add_trace(go.Scatter(
+                            x=[min_val, max_val],
+                            y=[min_val, max_val],
+                            mode='lines', 
+                            name='Linha de Referência',
+                            line=dict(color='red', dash='dash', width=2)
+                        ))
+                        
+                        fig_qq.update_layout(
+                            title="Q-Q Plot (Quantil-Quantil)",
+                            xaxis_title="Quantis Teóricos (Normal)",
+                            yaxis_title="Quantis Amostrais",
+                            height=400
+                        )
+                        st.plotly_chart(fig_qq, use_container_width=True)
+                    
+                    # Box plot adicional
+                    st.markdown("---")
+                    fig_box = go.Figure()
+                    fig_box.add_trace(go.Box(
+                        y=results['data'],
+                        name=results['variable'],
+                        boxmean='sd',
+                        marker_color='lightgreen'
+                    ))
+                    fig_box.update_layout(
+                        title=f"Box Plot - {results['variable']}",
+                        yaxis_title=results['variable'],
+                        height=400
+                    )
+                    st.plotly_chart(fig_box, use_container_width=True)
+            
+            # Salvar análise
+            if save_test:
+                results = st.session_state.get('normality_results')
+                if results:
+                    if save_analysis_to_db(project_name, "normality_test", results):
+                        st.success("✅ Análise de normalidade salva com sucesso no Supabase!")
+                    else:
+                        st.error("❌ Falha ao salvar a análise.")
+                else:
+                    st.warning("⚠️ Execute os testes antes de salvar.")
+            
+            # Exportar resultados
+            if export_test:
+                results = st.session_state.get('normality_results')
+                if results:
+                    # Criar relatório completo
+                    report = f"""
+TESTES DE NORMALIDADE - RELATÓRIO COMPLETO
+==========================================
+
+VARIÁVEL ANALISADA: {results['variable']}
+
+ESTATÍSTICAS DESCRITIVAS:
+- N: {results['n_samples']}
+- Média: {results['mean']:.4f}
+- Desvio Padrão: {results['std']:.4f}
+- Mediana: {results['median']:.4f}
+- Assimetria (Skewness): {results['skewness']:.4f}
+- Curtose (Kurtosis): {results['kurtosis']:.4f}
+
+RESULTADOS DOS TESTES:
+"""
+                    
+                    for test_name, test_results in results['tests'].items():
+                        report += f"\n{test_name}:\n"
+                        if 'p_value' in test_results:
+                            report += f"  - Estatística: {test_results['statistic']:.4f}\n"
+                            report += f"  - Valor p: {test_results['p_value']:.4f}\n"
+                            report += f"  - Conclusão: {'Normal' if test_results['conclusion'] == 'normal' else 'Não Normal'}\n"
+                        elif 'critical_values' in test_results:
+                            report += f"  - Estatística: {test_results['statistic']:.4f}\n"
+                            report += f"  - Valores Críticos: {test_results['critical_values']}\n"
+                            report += f"  - Conclusão: {'Normal' if test_results['conclusion'] == 'normal' else 'Não Normal'}\n"
+                    
+                    report += f"\nDADOS BRUTOS:\n"
+                    
+                    # DataFrame com dados
+                    export_df = pd.DataFrame({
+                        results['variable']: results['data']
+                    })
+                    
+                    csv = report + "\n" + export_df.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Download Relatório Completo (CSV)",
+                        data=csv.encode('utf-8'),
+                        file_name=f"normalidade_{results['variable']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("⚠️ Execute os testes antes de exportar.")
+        
+        else:
+            st.warning("⚠️ Nenhuma variável numérica disponível nos dados.")
+    
+    else:
+        st.info("📊 Carregue dados primeiro para realizar testes de normalidade.")
+
+
+
+#######################################################################################################################################################################################################################################################################
 
 # ========================= TAB 7: CORRELAÇÃO =========================
 with tabs[6]:
