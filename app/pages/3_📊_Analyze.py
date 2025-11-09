@@ -2164,65 +2164,255 @@ RESULTADOS DOS TESTES:
 
 #######################################################################################################################################################################################################################################################################
 
-# ========================= TAB 7: CORRELAÇÃO =========================
+# ========================= TAB 7: CORRELAÇÃO (VERSÃO MELHORADA) =========================
 with tabs[6]:
     st.header("🔗 Análise de Correlação")
+    st.markdown("**Objetivo:** Identificar relações entre variáveis do processo")
     
     if data is not None:
         numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
         
         if len(numeric_cols) >= 2:
-            selected_cols = st.multiselect(
-                "Selecione as variáveis:",
-                numeric_cols,
-                default=numeric_cols[:5] if len(numeric_cols) > 5 else numeric_cols,
-                key="corr_cols"
-            )
             
-            if len(selected_cols) >= 2:
-                # Métodos de correlação
-                corr_method = st.selectbox(
-                    "Método de Correlação:",
-                    ["Pearson", "Spearman", "Kendall"]
+            # ============= SELEÇÃO DE VARIÁVEIS =============
+            st.subheader("📊 Configuração da Análise")
+            
+            col_config1, col_config2 = st.columns([2, 1])
+            
+            with col_config1:
+                selected_cols = st.multiselect(
+                    "Selecione as variáveis para análise:",
+                    numeric_cols,
+                    default=numeric_cols[:5] if len(numeric_cols) > 5 else numeric_cols,
+                    help="Selecione de 2 a 10 variáveis",
+                    key="corr_cols"
                 )
                 
-                if st.button("Calcular Correlação", key="calc_corr"):
-                    # Calcular matriz
-                    if corr_method == "Pearson":
-                        corr_matrix = data[selected_cols].corr(method='pearson')
-                    elif corr_method == "Spearman":
-                        corr_matrix = data[selected_cols].corr(method='spearman')
-                    else:
-                        corr_matrix = data[selected_cols].corr(method='kendall')
+                if len(selected_cols) > 10:
+                    st.warning("⚠️ Muitas variáveis selecionadas. Recomendado: máximo 10 para melhor visualização.")
+                    selected_cols = selected_cols[:10]
+            
+            with col_config2:
+                corr_method = st.selectbox(
+                    "Método de Correlação:",
+                    ["Pearson", "Spearman", "Kendall"],
+                    help="""
+                    • Pearson: Relação linear
+                    • Spearman: Relação monotônica
+                    • Kendall: Mais robusto a outliers
+                    """,
+                    key="corr_method"
+                )
+                
+                threshold = st.slider(
+                    "Threshold para destacar:",
+                    0.0, 1.0, 0.5,
+                    help="Correlações acima deste valor serão destacadas",
+                    key="corr_threshold"
+                )
+            
+            st.divider()
+            
+            if len(selected_cols) >= 2:
+                
+                if st.button("🔄 Calcular Correlação", type="primary", use_container_width=True, key="calc_corr"):
                     
-                    # Heatmap
-                    fig = px.imshow(corr_matrix,
-                                   labels=dict(color="Correlação"),
-                                   x=selected_cols,
-                                   y=selected_cols,
-                                   color_continuous_scale='RdBu',
-                                   zmin=-1, zmax=1)
-                    
-                    fig.update_layout(title=f"Matriz de Correlação ({corr_method})")
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Correlações significativas
-                    st.subheader("📊 Correlações Significativas")
-                    threshold = st.slider("Threshold:", 0.0, 1.0, 0.7)
-                    
-                    strong_corr = []
-                    for i in range(len(corr_matrix.columns)):
-                        for j in range(i+1, len(corr_matrix.columns)):
-                            if abs(corr_matrix.iloc[i, j]) >= threshold:
-                                strong_corr.append({
-                                    'Var 1': corr_matrix.columns[i],
-                                    'Var 2': corr_matrix.columns[j],
-                                    'Correlação': corr_matrix.iloc[i, j],
-                                    'Força': 'Forte' if abs(corr_matrix.iloc[i, j]) >= 0.7 else 'Moderada'
-                                })
-                    
-                    if strong_corr:
-                        st.dataframe(pd.DataFrame(strong_corr), use_container_width=True)
+                    with st.spinner("Calculando correlações..."):
+                        try:
+                            # Calcular matriz de correlação
+                            if corr_method == "Pearson":
+                                corr_matrix = data[selected_cols].corr(method='pearson')
+                            elif corr_method == "Spearman":
+                                corr_matrix = data[selected_cols].corr(method='spearman')
+                            else:
+                                corr_matrix = data[selected_cols].corr(method='kendall')
+                            
+                            st.success(f"✅ Correlação calculada usando método {corr_method}")
+                            
+                            # ============= HEATMAP MELHORADO =============
+                            st.subheader("🔥 Matriz de Correlação (Heatmap)")
+                            
+                            # Criar heatmap com anotações
+                            fig = go.Figure(data=go.Heatmap(
+                                z=corr_matrix.values,
+                                x=corr_matrix.columns,
+                                y=corr_matrix.columns,
+                                colorscale='RdBu_r',  # Invertido: vermelho = positivo, azul = negativo
+                                zmid=0,
+                                zmin=-1,
+                                zmax=1,
+                                text=np.round(corr_matrix.values, 2),
+                                texttemplate='%{text}',
+                                textfont={"size": 10},
+                                colorbar=dict(
+                                    title="Correlação",
+                                    tickvals=[-1, -0.5, 0, 0.5, 1],
+                                    ticktext=['-1.0<br>Negativa<br>Forte', '-0.5', '0<br>Nenhuma', '0.5', '1.0<br>Positiva<br>Forte']
+                                ),
+                                hovertemplate='%{y} vs %{x}<br>Correlação: %{z:.3f}<extra></extra>'
+                            ))
+                            
+                            fig.update_layout(
+                                title=f"Matriz de Correlação - Método {corr_method}",
+                                xaxis=dict(side='bottom', tickangle=-45),
+                                yaxis=dict(side='left'),
+                                width=800,
+                                height=700,
+                                font=dict(size=11)
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            st.divider()
+                            
+                            # ============= CORRELAÇÕES SIGNIFICATIVAS =============
+                            st.subheader(f"📊 Correlações Significativas (|r| ≥ {threshold})")
+                            
+                            strong_corr = []
+                            for i in range(len(corr_matrix.columns)):
+                                for j in range(i+1, len(corr_matrix.columns)):
+                                    corr_value = corr_matrix.iloc[i, j]
+                                    if abs(corr_value) >= threshold:
+                                        
+                                        # Classificar força da correlação
+                                        abs_corr = abs(corr_value)
+                                        if abs_corr >= 0.9:
+                                            strength = "Muito Forte"
+                                            emoji = "🔴"
+                                        elif abs_corr >= 0.7:
+                                            strength = "Forte"
+                                            emoji = "🟠"
+                                        elif abs_corr >= 0.5:
+                                            strength = "Moderada"
+                                            emoji = "🟡"
+                                        else:
+                                            strength = "Fraca"
+                                            emoji = "🟢"
+                                        
+                                        # Determinar direção
+                                        direction = "Positiva" if corr_value > 0 else "Negativa"
+                                        
+                                        strong_corr.append({
+                                            'Variável 1': corr_matrix.columns[i],
+                                            'Variável 2': corr_matrix.columns[j],
+                                            'Correlação': corr_value,
+                                            'Força': f"{emoji} {strength}",
+                                            'Direção': direction
+                                        })
+                            
+                            if strong_corr:
+                                # Ordenar por valor absoluto da correlação
+                                strong_corr_df = pd.DataFrame(strong_corr)
+                                strong_corr_df['Abs_Corr'] = strong_corr_df['Correlação'].abs()
+                                strong_corr_df = strong_corr_df.sort_values('Abs_Corr', ascending=False)
+                                strong_corr_df = strong_corr_df.drop('Abs_Corr', axis=1)
+                                
+                                # Formatar correlação
+                                strong_corr_df['Correlação'] = strong_corr_df['Correlação'].apply(lambda x: f"{x:.3f}")
+                                
+                                st.dataframe(strong_corr_df, use_container_width=True, hide_index=True)
+                                
+                                st.info(f"📊 **{len(strong_corr)} correlações** encontradas com |r| ≥ {threshold}")
+                                
+                                # Interpretação
+                                st.markdown("---")
+                                st.subheader("💡 Interpretação")
+                                
+                                st.markdown("""
+                                **Força da Correlação:**
+                                - 🔴 **0.9 - 1.0:** Muito Forte
+                                - 🟠 **0.7 - 0.9:** Forte
+                                - 🟡 **0.5 - 0.7:** Moderada
+                                - 🟢 **0.3 - 0.5:** Fraca
+                                - ⚪ **0.0 - 0.3:** Muito Fraca
+                                
+                                **Direção:**
+                                - **Positiva:** Quando uma variável aumenta, a outra também aumenta
+                                - **Negativa:** Quando uma variável aumenta, a outra diminui
+                                """)
+                                
+                                # Gráficos de dispersão para correlações fortes
+                                st.divider()
+                                st.subheader("📈 Gráficos de Dispersão (Top Correlações)")
+                                
+                                # Mostrar top 3 correlações
+                                top_corr = strong_corr_df.head(3)
+                                
+                                for idx, row in top_corr.iterrows():
+                                    var1 = row['Variável 1']
+                                    var2 = row['Variável 2']
+                                    
+                                    with st.expander(f"{row['Força']} {var1} vs {var2} (r = {row['Correlação']})"):
+                                        
+                                        # Criar scatter plot
+                                        fig_scatter = px.scatter(
+                                            data,
+                                            x=var1,
+                                            y=var2,
+                                            trendline="ols",
+                                            title=f"Correlação: {var1} vs {var2}",
+                                            labels={var1: var1, var2: var2}
+                                        )
+                                        
+                                        fig_scatter.update_layout(height=400)
+                                        st.plotly_chart(fig_scatter, use_container_width=True)
+                                        
+                                        # Estatísticas
+                                        col_stat1, col_stat2 = st.columns(2)
+                                        
+                                        with col_stat1:
+                                            st.metric(f"Média {var1}", f"{data[var1].mean():.2f}")
+                                            st.metric(f"DP {var1}", f"{data[var1].std():.2f}")
+                                        
+                                        with col_stat2:
+                                            st.metric(f"Média {var2}", f"{data[var2].mean():.2f}")
+                                            st.metric(f"DP {var2}", f"{data[var2].std():.2f}")
+                            
+                            else:
+                                st.info(f"ℹ️ Nenhuma correlação significativa encontrada com |r| ≥ {threshold}")
+                                st.info("💡 **Dica:** Reduza o threshold para ver correlações mais fracas")
+                            
+                            # ============= EXPORTAR =============
+                            st.divider()
+                            
+                            col_export1, col_export2 = st.columns(2)
+                            
+                            with col_export1:
+                                # Download matriz completa
+                                csv_matrix = corr_matrix.to_csv().encode('utf-8')
+                                st.download_button(
+                                    label="📥 Download Matriz Completa (CSV)",
+                                    data=csv_matrix,
+                                    file_name=f"matriz_correlacao_{corr_method.lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                            
+                            with col_export2:
+                                # Download correlações significativas
+                                if strong_corr:
+                                    csv_strong = strong_corr_df.to_csv(index=False).encode('utf-8')
+                                    st.download_button(
+                                        label="📥 Download Correlações Significativas (CSV)",
+                                        data=csv_strong,
+                                        file_name=f"correlacoes_significativas_{datetime.now().strftime('%Y%m%d')}.csv",
+                                        mime="text/csv",
+                                        use_container_width=True
+                                    )
+                        
+                        except Exception as e:
+                            st.error(f"❌ Erro ao calcular correlação: {str(e)}")
+            else:
+                st.warning("⚠️ Selecione pelo menos 2 variáveis para análise de correlação")
+        
+        else:
+            st.warning("⚠️ São necessárias pelo menos 2 variáveis numéricas para análise de correlação")
+            st.info("Carregue dados com variáveis numéricas na página Measure")
+    
+    else:
+        st.info("📊 Carregue dados primeiro para realizar análise de correlação")
+        st.info("Use a página **Measure** para fazer upload dos dados")
+
 ################################################################################################################################################################################################################################
 
 # ========================= TAB 8: BOX PLOT & OUTLIERS (COM SALVAMENTO) =========================
