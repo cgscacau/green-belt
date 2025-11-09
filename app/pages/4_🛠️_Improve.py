@@ -5,6 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import numpy as np
 import os
+import time
 from supabase import create_client, Client
 
 # Configuração da página
@@ -271,7 +272,8 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Dashboard"
 ])
 
-# ========================= TAB 1: BRAINSTORMING (CORRIGIDO) =========================
+# ========================= TAB 1: BRAINSTORMING =========================
+# (mantém o código original da tab1 aqui - não vou reescrever para economizar espaço)
 
 with tab1:
     st.header("💡 Sessão de Brainstorming")
@@ -577,20 +579,14 @@ with tab1:
     else:
         st.info("💡 Nenhuma ideia cadastrada ainda. Use o formulário acima para adicionar a primeira ideia!")
 
-#####################################################################################################################################################################################################################################################################
+# ========================= TAB 2: PRIORIZAÇÃO (VERSÃO COMPLETA E CORRIGIDA) =========================
+
 with tab2:
     st.header("📊 Priorização de Ações")
     
-    # Verificar se há um projeto selecionado
-    if 'project_id' not in st.session_state or not st.session_state.project_id:
-        st.warning("⚠️ Por favor, selecione um projeto primeiro na página inicial.")
-        st.stop()
-    
-    project_id = st.session_state.project_id
-    
-    # Buscar ações priorizadas existentes
+    # Buscar ações priorizadas existentes - usando project_name ao invés de project_id
     try:
-        response = supabase.table('improvement_actions').select('*').eq('project_id', project_id).order('priority_level', desc=False).execute()
+        response = supabase.table('improvement_actions').select('*').eq('project_name', project_name).order('priority', desc=True).execute()
         existing_actions = response.data if response.data else []
     except Exception as e:
         st.error(f"Erro ao carregar ações: {str(e)}")
@@ -602,13 +598,13 @@ with tab2:
         with col1:
             st.metric("Total de Ações", len(existing_actions))
         with col2:
-            high_priority = len([a for a in existing_actions if a.get('priority_level') == 'Alta'])
-            st.metric("Prioridade Alta", high_priority)
+            high_priority = len([a for a in existing_actions if a.get('priority', 0) >= 8])
+            st.metric("Alta Prioridade (≥8)", high_priority)
         with col3:
             in_progress = len([a for a in existing_actions if a.get('status') == 'Em Andamento'])
             st.metric("Em Andamento", in_progress)
         with col4:
-            completed = len([a for a in existing_actions if a.get('status') == 'Concluída'])
+            completed = len([a for a in existing_actions if a.get('status') == 'Concluído'])
             st.metric("Concluídas", completed)
         
         st.divider()
@@ -616,30 +612,34 @@ with tab2:
     # Filtros
     col1, col2, col3 = st.columns(3)
     with col1:
-        filter_priority = st.selectbox(
-            "Filtrar por Prioridade",
-            ["Todas", "Alta", "Média", "Baixa"],
-            key="filter_priority_prio"
+        # Filtro por nível de impacto
+        impact_options = ["Todos"] + list(set([a.get('impact_level', 'Médio') for a in existing_actions]))
+        filter_impact = st.selectbox(
+            "Filtrar por Impacto",
+            impact_options,
+            key="filter_impact_prio"
         )
     with col2:
+        # Filtro por status
+        status_options = ["Todos"] + list(set([a.get('status', 'Não Iniciado') for a in existing_actions]))
         filter_status = st.selectbox(
             "Filtrar por Status",
-            ["Todos", "Não Iniciada", "Em Andamento", "Concluída"],
+            status_options,
             key="filter_status_prio"
         )
     with col3:
-        # Pegar lista única de responsáveis
+        # Filtro por responsável
         responsibles = list(set([a.get('responsible', '') for a in existing_actions if a.get('responsible')]))
         filter_responsible = st.selectbox(
             "Filtrar por Responsável",
-            ["Todos"] + sorted(responsibles),
+            ["Todos"] + sorted(responsibles) if responsibles else ["Todos"],
             key="filter_responsible_prio"
         )
     
     # Aplicar filtros
     filtered_actions = existing_actions.copy()
-    if filter_priority != "Todas":
-        filtered_actions = [a for a in filtered_actions if a.get('priority_level') == filter_priority]
+    if filter_impact != "Todos":
+        filtered_actions = [a for a in filtered_actions if a.get('impact_level') == filter_impact]
     if filter_status != "Todos":
         filtered_actions = [a for a in filtered_actions if a.get('status') == filter_status]
     if filter_responsible != "Todos":
@@ -651,24 +651,40 @@ with tab2:
     if filtered_actions:
         st.subheader(f"📋 Ações Priorizadas ({len(filtered_actions)})")
         
-        # Organizar por prioridade
-        priority_order = {"Alta": 1, "Média": 2, "Baixa": 3}
-        filtered_actions.sort(key=lambda x: priority_order.get(x.get('priority_level', 'Média'), 2))
+        # Organizar por prioridade (maior para menor)
+        filtered_actions.sort(key=lambda x: x.get('priority', 0), reverse=True)
         
         for idx, action in enumerate(filtered_actions):
-            # Ícone baseado na prioridade
-            priority_icon = {"Alta": "🔴", "Média": "🟡", "Baixa": "🟢"}
-            icon = priority_icon.get(action.get('priority_level', 'Média'), "⚪")
+            # Determinar cor baseado na prioridade
+            priority_val = action.get('priority', 5)
+            if priority_val >= 8:
+                icon = "🔴"
+                priority_label = "Alta"
+            elif priority_val >= 5:
+                icon = "🟡"
+                priority_label = "Média"
+            else:
+                icon = "🟢"
+                priority_label = "Baixa"
             
-            with st.expander(f"{icon} {action.get('action_title', 'Sem título')} - **{action.get('priority_level', 'N/A')}**", expanded=False):
+            with st.expander(f"{icon} {action.get('action_title', 'Sem título')} - **{priority_label}** (Prioridade: {priority_val})", expanded=False):
                 col1, col2 = st.columns([3, 1])
                 
                 with col1:
                     st.write(f"**Descrição:** {action.get('description', 'Sem descrição')}")
                     st.write(f"**Responsável:** {action.get('responsible', 'Não definido')}")
-                    st.write(f"**Status:** {action.get('status', 'Não Iniciada')}")
+                    st.write(f"**Status:** {action.get('status', 'Não Iniciado')}")
+                    st.write(f"**Impacto:** {action.get('impact_level', 'Médio')}")
+                    st.write(f"**Esforço:** {action.get('effort_level', 'Médio')}")
+                    
                     if action.get('due_date'):
                         st.write(f"**Prazo:** {action.get('due_date')}")
+                    
+                    if action.get('success_criteria'):
+                        st.write(f"**Critérios de Sucesso:** {action.get('success_criteria')}")
+                    
+                    if action.get('resources_needed'):
+                        st.write(f"**Recursos Necessários:** {action.get('resources_needed')}")
                 
                 with col2:
                     # Botões de ação
@@ -694,25 +710,36 @@ with tab2:
                         edit_title = st.text_input("Título da Ação", value=action.get('action_title', ''))
                         edit_desc = st.text_area("Descrição", value=action.get('description', ''))
                         
-                        col1, col2 = st.columns(2)
+                        col1, col2, col3 = st.columns(3)
                         with col1:
-                            edit_priority = st.selectbox(
-                                "Nível de Prioridade",
-                                ["Alta", "Média", "Baixa"],
-                                index=["Alta", "Média", "Baixa"].index(action.get('priority_level', 'Média'))
+                            edit_impact = st.selectbox(
+                                "Nível de Impacto",
+                                ["Baixo", "Médio", "Alto", "Crítico"],
+                                index=["Baixo", "Médio", "Alto", "Crítico"].index(action.get('impact_level', 'Médio'))
                             )
                             edit_responsible = st.text_input("Responsável", value=action.get('responsible', ''))
                         
                         with col2:
+                            edit_effort = st.selectbox(
+                                "Nível de Esforço",
+                                ["Baixo", "Médio", "Alto", "Muito Alto"],
+                                index=["Baixo", "Médio", "Alto", "Muito Alto"].index(action.get('effort_level', 'Médio'))
+                            )
                             edit_status = st.selectbox(
                                 "Status",
-                                ["Não Iniciada", "Em Andamento", "Concluída"],
-                                index=["Não Iniciada", "Em Andamento", "Concluída"].index(action.get('status', 'Não Iniciada'))
+                                ["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"],
+                                index=["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"].index(action.get('status', 'Não Iniciado'))
                             )
+                        
+                        with col3:
+                            edit_priority = st.number_input("Prioridade (1-10)", min_value=1, max_value=10, value=action.get('priority', 5))
                             edit_due_date = st.date_input(
                                 "Data de Conclusão",
                                 value=datetime.strptime(action.get('due_date'), '%Y-%m-%d').date() if action.get('due_date') else None
                             )
+                        
+                        edit_criteria = st.text_area("Critérios de Sucesso", value=action.get('success_criteria', ''))
+                        edit_resources = st.text_area("Recursos Necessários", value=action.get('resources_needed', ''))
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -721,10 +748,15 @@ with tab2:
                                     update_data = {
                                         'action_title': edit_title,
                                         'description': edit_desc,
-                                        'priority_level': edit_priority,
+                                        'impact_level': edit_impact,
+                                        'effort_level': edit_effort,
                                         'responsible': edit_responsible,
                                         'status': edit_status,
-                                        'due_date': edit_due_date.strftime('%Y-%m-%d') if edit_due_date else None
+                                        'priority': edit_priority,
+                                        'due_date': edit_due_date.strftime('%Y-%m-%d') if edit_due_date else None,
+                                        'success_criteria': edit_criteria,
+                                        'resources_needed': edit_resources,
+                                        'updated_at': datetime.now().isoformat()
                                     }
                                     
                                     supabase.table('improvement_actions').update(update_data).eq('id', action['id']).execute()
@@ -752,14 +784,22 @@ with tab2:
             action_title = st.text_input("Título da Ação*", placeholder="Ex: Implementar controle de qualidade")
             description = st.text_area("Descrição*", placeholder="Descreva detalhadamente a ação...")
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                priority_level = st.selectbox("Nível de Prioridade*", ["Alta", "Média", "Baixa"])
+                impact_level = st.selectbox("Nível de Impacto*", ["Baixo", "Médio", "Alto", "Crítico"], index=1)
                 responsible = st.text_input("Responsável*", placeholder="Nome do responsável")
             
             with col2:
-                status = st.selectbox("Status", ["Não Iniciada", "Em Andamento", "Concluída"])
-                due_date = st.date_input("Data de Conclusão")
+                effort_level = st.selectbox("Nível de Esforço*", ["Baixo", "Médio", "Alto", "Muito Alto"], index=1)
+                status = st.selectbox("Status", ["Não Iniciado", "Em Andamento", "Pausado", "Concluído", "Cancelado"])
+            
+            with col3:
+                priority = st.number_input("Prioridade (1-10)*", min_value=1, max_value=10, value=5)
+                due_date = st.date_input("Data de Conclusão", min_value=datetime.now().date())
+            
+            with st.expander("Campos Adicionais (Opcional)"):
+                success_criteria = st.text_area("Critérios de Sucesso", height=80)
+                resources_needed = st.text_area("Recursos Necessários", height=80)
             
             submitted = st.form_submit_button("💾 Salvar Ação", type="primary", use_container_width=True)
             
@@ -769,28 +809,29 @@ with tab2:
                 else:
                     try:
                         new_action = {
-                            'project_id': project_id,
                             'action_title': action_title,
                             'description': description,
-                            'priority_level': priority_level,
+                            'impact_level': impact_level,
+                            'effort_level': effort_level,
                             'responsible': responsible,
                             'status': status,
-                            'due_date': due_date.strftime('%Y-%m-%d') if due_date else None
+                            'priority': priority,
+                            'due_date': due_date.strftime('%Y-%m-%d') if due_date else None,
+                            'success_criteria': success_criteria,
+                            'resources_needed': resources_needed
                         }
                         
-                        supabase.table('improvement_actions').insert(new_action).execute()
-                        st.success("✅ Ação adicionada com sucesso!")
-                        time.sleep(1)
-                        st.rerun()
+                        if save_improvement_action(project_name, new_action):
+                            st.success("✅ Ação adicionada com sucesso!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("❌ Erro ao salvar ação")
                     except Exception as e:
                         st.error(f"❌ Erro ao adicionar ação: {str(e)}")
 
-
-#####################################################################################################################################################################################################################################################################
-
-
-
-# ========================= TAB 3: PLANO DE AÇÃO (CORRIGIDO) =========================
+# ========================= TAB 3, 4, 5: MANTER CÓDIGO ORIGINAL =========================
+# (continua com o resto do código original das tabs 3, 4 e 5)
 
 with tab3:
     st.header("📋 Plano de Ação Detalhado")
@@ -891,9 +932,6 @@ with tab3:
         - Concluído
         - Cancelado
         """)
-
-
-# ========================= TAB 4: SIMULAÇÃO =========================
 
 with tab4:
     st.header("🔬 Simulação de Melhorias")
@@ -1038,8 +1076,6 @@ with tab4:
         if project_data.get('expected_savings'):
             roi = (project_data['expected_savings'] * improvement_percentage/100) / 1000
             st.metric("ROI Estimado", f"R$ {roi:.0f}k")
-
-# ========================= TAB 5: DASHBOARD =========================
 
 with tab5:
     st.header("📈 Dashboard de Acompanhamento")
