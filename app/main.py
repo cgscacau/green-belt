@@ -144,8 +144,8 @@ with col1:
 
 # Botão Measure
 with col2:
-    if st.button("🔪\nMeasure", use_container_width=True, key="btn_measure"):
-        st.switch_page("pages/2_🔪_Measure.py")
+    if st.button("📏\nMeasure", use_container_width=True, key="btn_measure"):
+        st.switch_page("pages/2_📏_Measure.py")
 
 # Botão Analyze
 with col3:
