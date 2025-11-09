@@ -2977,6 +2977,44 @@ with tabs[9]:
                     import traceback
                     st.code(traceback.format_exc())
 
+    # CÓDIGO DE DEBUG TEMPORÁRIO
+with col_load:
+    if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_anova"):
+        if not supabase:
+            st.error("❌ Conexão com Supabase não disponível.")
+        else:
+            try:
+                # DEBUG: Ver todas as análises
+                st.write("🔍 **DEBUG - Buscando análises...**")
+                response = supabase.table('analyses').select('*').eq('project_name', project_name).execute()
+                st.write(f"Total de análises encontradas: {len(response.data)}")
+                
+                # Mostrar tipos de análises disponíveis
+                if response.data:
+                    analysis_types = [item['analysis_type'] for item in response.data]
+                    st.write(f"Tipos disponíveis: {set(analysis_types)}")
+                
+                # Buscar ANOVA especificamente
+                response_anova = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'anova_analysis').order('created_at', desc=True).execute()
+                
+                st.write(f"Análises ANOVA encontradas: {len(response_anova.data)}")
+                
+                if response_anova.data and len(response_anova.data) > 0:
+                    st.write("✅ Dados encontrados!")
+                    st.json(response_anova.data[0])  # Mostrar estrutura dos dados
+                    
+                    loaded_data = response_anova.data[0]['results']
+                    st.session_state.anova_results = loaded_data
+                    st.success("✅ Análise ANOVA carregada com sucesso!")
+                    st.rerun()
+                else:
+                    st.info("ℹ️ Nenhuma análise ANOVA salva encontrada para este projeto.")
+            except Exception as e:
+                st.error(f"Erro ao carregar dados: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+
+
     
     with col_new:
         if st.button("🆕 Nova Análise", use_container_width=True, key="new_anova"):
