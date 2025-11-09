@@ -1004,10 +1004,19 @@ with tab5:
         if 'pareto' in all_analyses:
             try:
                 pareto_data = all_analyses['pareto'][0].get('results') or all_analyses['pareto'][0].get('data')
+                # DEPOIS (código corrigido):
                 if pareto_data and 'data' in pareto_data:
                     df_pareto = pd.DataFrame(pareto_data['data'])
                     
+                    # CORREÇÃO 1: Ordenar por frequência/valor decrescente
+                    freq_col = 'Frequência' if 'Frequência' in df_pareto.columns else 'Valor'
+                    df_pareto = df_pareto.sort_values(by=freq_col, ascending=False)
+                    
+                    # Recalcular acumulado após ordenação
+                    df_pareto['Acumulado'] = (df_pareto[freq_col].cumsum() / df_pareto[freq_col].sum() * 100)
+                    
                     fig_pareto = make_subplots(specs=[[{"secondary_y": True}]])
+
                     
                     fig_pareto.add_trace(
                         go.Bar(x=df_pareto.get('Categoria', []), 
@@ -1110,21 +1119,31 @@ with tab5:
                     df_fmea = pd.DataFrame(fmea_items)
                     df_fmea_top = df_fmea.nlargest(10, 'rpn')
                     
+                    # DEPOIS (código corrigido):
+                    # CORREÇÃO 2: Quebrar texto longo e aumentar altura
+                    df_fmea_top['process_short'] = df_fmea_top['process_step'].apply(
+                        lambda x: '<br>'.join(textwrap.wrap(str(x), width=15)) if len(str(x)) > 15 else str(x)
+                    )
+                    
                     fig_fmea = go.Figure(data=[
                         go.Bar(
-                            x=df_fmea_top['process_step'],
+                            x=df_fmea_top['process_short'],
                             y=df_fmea_top['rpn'],
                             marker_color=['red' if r >= 100 else 'orange' if r >= 50 else 'green' for r in df_fmea_top['rpn']],
                             text=df_fmea_top['rpn'],
-                            textposition='auto'
+                            textposition='auto',
+                            hovertemplate='<b>%{x}</b><br>RPN: %{y}<extra></extra>'
                         )
                     ])
                     fig_fmea.update_layout(
                         title="FMEA - Top 10 Riscos por RPN",
                         xaxis_title="Processo",
                         yaxis_title="RPN",
-                        height=400
+                        height=500,  # Aumentado de 400 para 500
+                        xaxis={'tickangle': -45},  # Rotacionar labels para melhor leitura
+                        margin=dict(b=150)  # Mais margem embaixo para os textos
                     )
+
                     fmea_html = fig_fmea.to_html(include_plotlyjs=False, div_id="fmea-chart")
             except:
                 pass
