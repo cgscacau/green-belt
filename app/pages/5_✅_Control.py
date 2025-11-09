@@ -2115,8 +2115,9 @@ with tab5:
                                 'Concluído' if achievement >= 90 else 'Em andamento'
                             ]
                         }
-                        pd.DataFrame(summary_data).to_excel(writer, sheet_name='Resumo', index=False)
-                        
+                        df_summary = pd.DataFrame(summary_data)
+                        df_summary.to_excel(writer, sheet_name='Resumo', index=False)
+                                                
                         # Aba 2: Medições (se disponível)
                         if measurements is not None and len(measurements) > 0:
                             measurements.to_excel(writer, sheet_name='Medições', index=False)
@@ -2137,7 +2138,7 @@ with tab5:
                     
                     st.download_button(
                         label="📥 Download Excel Completo",
-                        data=output,
+                        data=output.getvalue(),
                         file_name=f"relatorio_excel_{project_name}_{datetime.now().strftime('%Y%m%d')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
@@ -2147,11 +2148,10 @@ with tab5:
                     
                 except Exception as e:
                     st.error(f"❌ Erro ao gerar Excel: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
-
-
-                
-
+               
 
 # Footer
 st.divider()
