@@ -300,13 +300,15 @@ with tabs[1]:
                 category_col = st.selectbox(
                     "Coluna de categorias:",
                     data.columns,
-                    key="pareto_cat_select"
+                    key="pareto_cat_select",
+                    on_change=lambda: setattr(st.session_state, 'stay_on_pareto', True)
                 )
                 
                 value_col = st.selectbox(
                     "Coluna de valores:",
                     ["Contagem"] + list(data.columns),
-                    key="pareto_val_select"
+                    key="pareto_val_select",
+                    on_change=lambda: setattr(st.session_state, 'stay_on_pareto', True)
                 )
             
             with col2:
