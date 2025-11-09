@@ -686,30 +686,57 @@ with tabs[2]:
             # Criar o diagrama
             fig = go.Figure()
             
-            # Configuração do layout
-            fig.update_layout(
-                title="Diagrama de Ishikawa - Análise de Causa e Efeito",
-                showlegend=False,
-                xaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 12]),
-                yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 10]),
-                height=600,
-                plot_bgcolor='#0E1117'
-            )
-            
-            # Espinha principal
-            fig.add_trace(go.Scatter(
-                x=[1, 10], y=[5, 5],
-                mode='lines',
-                line=dict(color='black', width=3)
-            ))
-            
-            # Posições das categorias
-            positions = [
-                (2.5, 7.5), (5, 7.5), (7.5, 7.5),
-                (2.5, 2.5), (5, 2.5), (7.5, 2.5)
-            ]
-            
-            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#48C9B0']
+        # Na função create_ishikawa_diagram(), modifique a parte do layout:
+        
+        fig.update_layout(
+            title={
+                'text': f"Ishikawa Diagram - {selected_problem}",
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 20, 'color': '#FAFAFA'}  # Título em cor clara
+            },
+            showlegend=False,
+            hovermode='closest',
+            margin=dict(t=100, b=50, l=50, r=50),
+            height=600,
+            plot_bgcolor='#0E1117',  # Fundo do gráfico (área de plotagem)
+            paper_bgcolor='#0E1117',  # Fundo do papel (área total)
+            xaxis={
+                'showgrid': False,
+                'zeroline': False,
+                'showticklabels': False,
+                'showline': False,
+                'range': [-2.5, 2.5]
+            },
+            yaxis={
+                'showgrid': False,
+                'zeroline': False,
+                'showticklabels': False,
+                'showline': False,
+                'range': [-1.5, 1.5]
+            }
+        )
+        
+        # Também ajuste as cores das linhas e textos:
+        # Para a linha principal (espinha)
+        fig.add_trace(go.Scatter(
+            x=[-2, 2], y=[0, 0],
+            mode='lines',
+            line=dict(color='#FF4B4B', width=3),  # Vermelho Streamlit
+            hoverinfo='skip'
+        ))
+        
+        # Para as linhas das categorias (espinhas laterais)
+        # Use cores diferentes para cada categoria
+        category_colors = {
+            'Method': '#00D4FF',      # Ciano
+            'Machine': '#FFDD00',      # Amarelo
+            'Material': '#00FF88',     # Verde
+            'Manpower': '#FF6B6B',     # Vermelho claro
+            'Measurement': '#B794F4',  # Roxo
+            'Environment': '#4ECDC4'   # Turquesa
+        }
+
             
             # Adicionar categorias e causas
             for i, (category, causes) in enumerate(categories_filled.items()):
