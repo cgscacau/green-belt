@@ -2526,9 +2526,45 @@ RESUMO GERAL:
 
 ################################################################################################################################################################################################################################
 
-# ========================= TAB 9: CAPACIDADE =========================
+# ========================= TAB 9: CAPACIDADE (COM SALVAMENTO) =========================
 with tabs[8]:
     st.header("⚙️ Análise de Capacidade do Processo")
+    
+    # Verificar se há projeto selecionado
+    project_name = st.session_state.get('project_name', None)
+    
+    if not project_name:
+        st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
+        st.stop()
+    
+    # Botões de carregar e nova análise
+    col_load, col_new = st.columns([1, 1])
+    
+    with col_load:
+        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_capability"):
+            if not supabase:
+                st.error("❌ Conexão com Supabase não disponível.")
+            else:
+                try:
+                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'capability_analysis').order('created_at', desc=True).limit(1).execute()
+                    
+                    if response.data and len(response.data) > 0:
+                        loaded_data = response.data[0]['results']
+                        st.session_state.capability_results = loaded_data
+                        st.success("✅ Análise de capacidade carregada com sucesso!")
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ Nenhuma análise de capacidade salva encontrada para este projeto.")
+                except Exception as e:
+                    st.error(f"Erro ao carregar dados: {str(e)}")
+    
+    with col_new:
+        if st.button("🆕 Nova Análise", use_container_width=True, key="new_capability"):
+            if 'capability_results' in st.session_state:
+                del st.session_state.capability_results
+            st.rerun()
+    
+    st.divider()
     
     if data is not None:
         numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
@@ -2536,83 +2572,408 @@ with tabs[8]:
         if numeric_cols:
             selected_col = st.selectbox("Variável do processo:", numeric_cols, key="cap_col")
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                lsl = st.number_input("LSL (Limite Inferior):", value=0.0)
+                lsl = st.number_input("LSL (Limite Inferior de Especificação):", value=0.0, key="cap_lsl")
             with col2:
-                usl = st.number_input("USL (Limite Superior):", value=100.0)
+                target = st.number_input("Valor Alvo (Target):", value=50.0, key="cap_target")
+            with col3:
+                usl = st.number_input("USL (Limite Superior de Especificação):", value=100.0, key="cap_usl")
             
-            if st.button("Calcular Capacidade", key="calc_cap") and usl > lsl:
-                process_data = data[selected_col].dropna()
+            # Validação
+            if lsl >= usl:
+                st.error("❌ O LSL deve ser menor que o USL!")
+                st.stop()
+            
+            if not (lsl <= target <= usl):
+                st.warning("⚠️ O valor alvo deve estar entre LSL e USL!")
+            
+            # Botões de ação
+            col_exec, col_save, col_export = st.columns([1, 1, 1])
+            
+            with col_exec:
+                execute_analysis = st.button("🔄 Calcular Capacidade", key="calc_cap", use_container_width=True, type="primary")
+            
+            with col_save:
+                save_analysis = st.button("💾 Salvar Análise", key="save_capability", use_container_width=True)
+            
+            with col_export:
+                export_analysis = st.button("📥 Exportar Resultados", key="export_capability", use_container_width=True)
+            
+            # Executar análise
+            current_results = st.session_state.get('capability_results') or {}
+            if execute_analysis or (current_results.get('variable') == selected_col and 
+                                   current_results.get('lsl') == lsl and 
+                                   current_results.get('usl') == usl):
                 
-                # Cálculos
-                mean = process_data.mean()
-                std = process_data.std()
+                if execute_analysis:
+                    process_data = data[selected_col].dropna()
+                    
+                    # Estatísticas básicas
+                    mean = process_data.mean()
+                    std = process_data.std()
+                    median = process_data.median()
+                    
+                    # Índices de capacidade (Cp, Cpk)
+                    cp = (usl - lsl) / (6 * std)
+                    cpu = (usl - mean) / (3 * std)
+                    cpl = (mean - lsl) / (3 * std)
+                    cpk = min(cpu, cpl)
+                    
+                    # Índices de performance (Pp, Ppk)
+                    pp = (usl - lsl) / (6 * process_data.std(ddof=1))
+                    ppu = (usl - mean) / (3 * process_data.std(ddof=1))
+                    ppl = (mean - lsl) / (3 * process_data.std(ddof=1))
+                    ppk = min(ppu, ppl)
+                    
+                    # Índice Cpm (considera o target)
+                    tau = np.sqrt(std**2 + (mean - target)**2)
+                    cpm = (usl - lsl) / (6 * tau)
+                    
+                    # PPM (Partes Por Milhão fora de especificação)
+                    prob_below_lsl = stats.norm.cdf(lsl, mean, std)
+                    prob_above_usl = 1 - stats.norm.cdf(usl, mean, std)
+                    ppm_below_lsl = prob_below_lsl * 1_000_000
+                    ppm_above_usl = prob_above_usl * 1_000_000
+                    ppm_total = ppm_below_lsl + ppm_above_usl
+                    
+                    # Nível Sigma
+                    sigma_level = 3 * cpk
+                    
+                    # Yield (% dentro da especificação)
+                    yield_pct = (1 - (prob_below_lsl + prob_above_usl)) * 100
+                    
+                    # Centralização do processo
+                    process_center = (lsl + usl) / 2
+                    offset = mean - process_center
+                    offset_pct = (offset / ((usl - lsl) / 2)) * 100
+                    
+                    # Contagem real de valores fora de especificação
+                    below_lsl = len(process_data[process_data < lsl])
+                    above_usl = len(process_data[process_data > usl])
+                    total_out_of_spec = below_lsl + above_usl
+                    
+                    # Salvar no session_state
+                    st.session_state.capability_results = {
+                        'variable': selected_col,
+                        'lsl': float(lsl),
+                        'usl': float(usl),
+                        'target': float(target),
+                        'n_samples': int(len(process_data)),
+                        'mean': float(mean),
+                        'std': float(std),
+                        'median': float(median),
+                        'cp': float(cp),
+                        'cpk': float(cpk),
+                        'cpu': float(cpu),
+                        'cpl': float(cpl),
+                        'pp': float(pp),
+                        'ppk': float(ppk),
+                        'ppu': float(ppu),
+                        'ppl': float(ppl),
+                        'cpm': float(cpm),
+                        'ppm_below_lsl': float(ppm_below_lsl),
+                        'ppm_above_usl': float(ppm_above_usl),
+                        'ppm_total': float(ppm_total),
+                        'sigma_level': float(sigma_level),
+                        'yield_pct': float(yield_pct),
+                        'offset': float(offset),
+                        'offset_pct': float(offset_pct),
+                        'below_lsl': int(below_lsl),
+                        'above_usl': int(above_usl),
+                        'total_out_of_spec': int(total_out_of_spec),
+                        'data': process_data.tolist()
+                    }
                 
-                # Índices de capacidade
-                cp = (usl - lsl) / (6 * std)
-                cpu = (usl - mean) / (3 * std)
-                cpl = (mean - lsl) / (3 * std)
-                cpk = min(cpu, cpl)
+                # Recuperar resultados
+                results = st.session_state.get('capability_results')
                 
-                # Índices de performance
-                pp = (usl - lsl) / (6 * process_data.std(ddof=1))
-                ppu = (usl - mean) / (3 * process_data.std(ddof=1))
-                ppl = (mean - lsl) / (3 * process_data.std(ddof=1))
-                ppk = min(ppu, ppl)
-                
-                # PPM
-                prob_below_lsl = stats.norm.cdf(lsl, mean, std)
-                prob_above_usl = 1 - stats.norm.cdf(usl, mean, std)
-                ppm_total = (prob_below_lsl + prob_above_usl) * 1_000_000
-                
-                # Nível sigma
-                sigma_level = 3 * cpk
-                
-                # Métricas
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("Cp", f"{cp:.3f}")
-                    st.metric("Pp", f"{pp:.3f}")
-                
-                with col2:
-                    st.metric("Cpk", f"{cpk:.3f}")
-                    st.metric("Ppk", f"{ppk:.3f}")
-                
-                with col3:
-                    st.metric("PPM Total", f"{ppm_total:.0f}")
-                    st.metric("Nível Sigma", f"{sigma_level:.1f}σ")
-                
-                with col4:
-                    # Interpretação
-                    if cpk >= 1.33:
-                        st.success("✅ Processo Capaz")
-                    elif cpk >= 1.0:
-                        st.warning("⚠️ Marginalmente Capaz")
+                if results:
+                    # Classificação do processo
+                    if results['cpk'] >= 2.0:
+                        capability_status = "🌟 Excelente"
+                        capability_color = "green"
+                    elif results['cpk'] >= 1.33:
+                        capability_status = "✅ Capaz"
+                        capability_color = "green"
+                    elif results['cpk'] >= 1.0:
+                        capability_status = "⚠️ Marginalmente Capaz"
+                        capability_color = "orange"
                     else:
-                        st.error("❌ Não Capaz")
-                
-                # Gráfico
-                fig = go.Figure()
-                
-                # Histograma
-                fig.add_trace(go.Histogram(x=process_data, nbinsx=30, name='Dados',
-                                          histnorm='probability density'))
-                
-                # Curva normal
-                x_range = np.linspace(process_data.min(), process_data.max(), 100)
-                y_normal = stats.norm.pdf(x_range, mean, std)
-                fig.add_trace(go.Scatter(x=x_range, y=y_normal, mode='lines',
-                                        name='Distribuição Normal', line=dict(color='red')))
-                
-                # Limites
-                fig.add_vline(x=lsl, line_dash="dash", line_color="red", annotation_text=f"LSL: {lsl}")
-                fig.add_vline(x=usl, line_dash="dash", line_color="red", annotation_text=f"USL: {usl}")
-                fig.add_vline(x=mean, line_dash="dash", line_color="green", annotation_text=f"Média: {mean:.2f}")
-                
-                fig.update_layout(title="Análise de Capacidade do Processo", height=500)
-                st.plotly_chart(fig, use_container_width=True)
+                        capability_status = "❌ Não Capaz"
+                        capability_color = "red"
+                    
+                    # Métricas principais
+                    st.subheader("📊 Índices de Capacidade")
+                    
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    
+                    with col1:
+                        st.metric("Cp", f"{results['cp']:.3f}")
+                        st.caption("Capacidade Potencial")
+                    
+                    with col2:
+                        st.metric("Cpk", f"{results['cpk']:.3f}")
+                        st.caption("Capacidade Real")
+                    
+                    with col3:
+                        st.metric("Pp", f"{results['pp']:.3f}")
+                        st.caption("Performance Potencial")
+                    
+                    with col4:
+                        st.metric("Ppk", f"{results['ppk']:.3f}")
+                        st.caption("Performance Real")
+                    
+                    with col5:
+                        st.metric("Cpm", f"{results['cpm']:.3f}")
+                        st.caption("Cap. c/ Target")
+                    
+                    # Status do processo
+                    st.markdown("---")
+                    st.markdown(f"### Status do Processo: :{capability_color}[{capability_status}]")
+                    
+                    # Métricas de performance
+                    st.subheader("📈 Métricas de Performance")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Nível Sigma", f"{results['sigma_level']:.2f}σ")
+                        st.caption("Qualidade Six Sigma")
+                    
+                    with col2:
+                        st.metric("Yield", f"{results['yield_pct']:.2f}%")
+                        st.caption("Dentro da Especificação")
+                    
+                    with col3:
+                        st.metric("PPM Total", f"{results['ppm_total']:.0f}")
+                        st.caption("Defeitos por Milhão")
+                    
+                    with col4:
+                        st.metric("Fora de Spec", f"{results['total_out_of_spec']}")
+                        st.caption(f"de {results['n_samples']} amostras")
+                    
+                    # Detalhamento de defeitos
+                    if results['total_out_of_spec'] > 0:
+                        st.markdown("---")
+                        st.subheader("🔍 Detalhamento de Não-Conformidades")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.metric("Abaixo do LSL", results['below_lsl'])
+                            st.metric("PPM Abaixo LSL", f"{results['ppm_below_lsl']:.0f}")
+                        
+                        with col2:
+                            st.metric("Acima do USL", results['above_usl'])
+                            st.metric("PPM Acima USL", f"{results['ppm_above_usl']:.0f}")
+                    
+                    # Centralização
+                    st.markdown("---")
+                    st.subheader("🎯 Centralização do Processo")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Média do Processo", f"{results['mean']:.3f}")
+                    
+                    with col2:
+                        st.metric("Centro da Especificação", f"{(results['lsl'] + results['usl']) / 2:.3f}")
+                    
+                    with col3:
+                        st.metric("Desvio do Centro", f"{results['offset']:.3f}", 
+                                 delta=f"{results['offset_pct']:.1f}%")
+                    
+                    if abs(results['offset_pct']) > 10:
+                        st.warning(f"⚠️ Processo descentrado em {abs(results['offset_pct']):.1f}% do range de especificação!")
+                    
+                    # Gráfico principal
+                    st.markdown("---")
+                    st.subheader("📊 Visualização da Capacidade")
+                    
+                    fig = go.Figure()
+                    
+                    # Histograma
+                    fig.add_trace(go.Histogram(
+                        x=results['data'], 
+                        nbinsx=30, 
+                        name='Dados',
+                        histnorm='probability density',
+                        marker_color='lightblue',
+                        opacity=0.7
+                    ))
+                    
+                    # Curva normal
+                    x_range = np.linspace(min(results['data']), max(results['data']), 200)
+                    y_normal = stats.norm.pdf(x_range, results['mean'], results['std'])
+                    fig.add_trace(go.Scatter(
+                        x=x_range, 
+                        y=y_normal, 
+                        mode='lines',
+                        name='Distribuição Normal', 
+                        line=dict(color='red', width=3)
+                    ))
+                    
+                    # Limites e linhas de referência
+                    max_y = max(y_normal) * 1.1
+                    
+                    fig.add_shape(type="rect", x0=results['lsl'], x1=results['usl'], 
+                                 y0=0, y1=max_y, fillcolor="green", opacity=0.1, 
+                                 line=dict(width=0))
+                    
+                    fig.add_vline(x=results['lsl'], line_dash="dash", line_color="red", 
+                                 line_width=2, annotation_text=f"LSL: {results['lsl']:.2f}")
+                    fig.add_vline(x=results['usl'], line_dash="dash", line_color="red", 
+                                 line_width=2, annotation_text=f"USL: {results['usl']:.2f}")
+                    fig.add_vline(x=results['target'], line_dash="dot", line_color="blue", 
+                                 line_width=2, annotation_text=f"Target: {results['target']:.2f}")
+                    fig.add_vline(x=results['mean'], line_dash="solid", line_color="green", 
+                                 line_width=2, annotation_text=f"Média: {results['mean']:.2f}")
+                    
+                    fig.update_layout(
+                        title=f"Análise de Capacidade - {results['variable']}",
+                        xaxis_title=results['variable'],
+                        yaxis_title="Densidade de Probabilidade",
+                        height=500,
+                        showlegend=True
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Interpretação e recomendações
+                    st.markdown("---")
+                    st.subheader("💡 Interpretação e Recomendações")
+                    
+                    interpretation = f"""
+**Análise da Capacidade do Processo:**
+
+**Índices de Capacidade:**
+- **Cp = {results['cp']:.3f}**: Indica a capacidade potencial do processo (sem considerar centralização).
+- **Cpk = {results['cpk']:.3f}**: Indica a capacidade real do processo (considerando centralização).
+- **Diferença Cp-Cpk = {abs(results['cp'] - results['cpk']):.3f}**: {'Processo bem centralizado.' if abs(results['cp'] - results['cpk']) < 0.1 else 'Processo descentrado, há oportunidade de melhoria na centralização.'}
+
+**Performance Atual:**
+- **Yield = {results['yield_pct']:.2f}%**: {results['yield_pct']:.2f}% dos produtos estão dentro da especificação.
+- **PPM = {results['ppm_total']:.0f}**: Espera-se {results['ppm_total']:.0f} defeitos por milhão de oportunidades.
+- **Nível Sigma = {results['sigma_level']:.2f}σ**: {'Excelente (classe mundial)' if results['sigma_level'] >= 6 else 'Bom' if results['sigma_level'] >= 4 else 'Requer melhoria'}
+
+**Recomendações:**
+"""
+                    
+                    if results['cpk'] < 1.0:
+                        interpretation += """
+- ❌ **Ação Imediata Necessária**: O processo não é capaz. Investigue causas especiais e reduza a variabilidade.
+- 🔍 Realize análise de causa raiz para identificar fontes de variação.
+- 📊 Considere implementar controle estatístico de processo (CEP).
+"""
+                    elif results['cpk'] < 1.33:
+                        interpretation += """
+- ⚠️ **Atenção**: Processo marginalmente capaz. Monitore de perto e trabalhe para melhorar.
+- 🎯 Foque em reduzir variabilidade e melhorar centralização.
+"""
+                    else:
+                        interpretation += """
+- ✅ **Processo Capaz**: Continue monitorando para manter a capacidade.
+- 📈 Busque oportunidades de melhoria contínua.
+"""
+                    
+                    if abs(results['offset_pct']) > 10:
+                        interpretation += f"""
+- 🎯 **Centralização**: O processo está descentrado em {abs(results['offset_pct']):.1f}%. Ajuste a média do processo para o centro da especificação.
+"""
+                    
+                    st.info(interpretation)
+            
+            # Salvar análise
+            if save_analysis:
+                results = st.session_state.get('capability_results')
+                if results:
+                    if save_analysis_to_db(project_name, "capability_analysis", results):
+                        st.success("✅ Análise de capacidade salva com sucesso no Supabase!")
+                    else:
+                        st.error("❌ Falha ao salvar a análise.")
+                else:
+                    st.warning("⚠️ Execute a análise antes de salvar.")
+            
+            # Exportar resultados
+            if export_analysis:
+                results = st.session_state.get('capability_results')
+                if results:
+                    # Criar relatório completo
+                    report = f"""
+ANÁLISE DE CAPACIDADE DO PROCESSO - RELATÓRIO COMPLETO
+======================================================
+
+INFORMAÇÕES GERAIS:
+- Variável: {results['variable']}
+- Número de Amostras: {results['n_samples']}
+- LSL (Limite Inferior): {results['lsl']:.3f}
+- Target (Alvo): {results['target']:.3f}
+- USL (Limite Superior): {results['usl']:.3f}
+
+ESTATÍSTICAS DESCRITIVAS:
+- Média: {results['mean']:.4f}
+- Desvio Padrão: {results['std']:.4f}
+- Mediana: {results['median']:.4f}
+
+ÍNDICES DE CAPACIDADE:
+- Cp (Capacidade Potencial): {results['cp']:.4f}
+- Cpk (Capacidade Real): {results['cpk']:.4f}
+- Cpu: {results['cpu']:.4f}
+- Cpl: {results['cpl']:.4f}
+
+ÍNDICES DE PERFORMANCE:
+- Pp: {results['pp']:.4f}
+- Ppk: {results['ppk']:.4f}
+- Ppu: {results['ppu']:.4f}
+- Ppl: {results['ppl']:.4f}
+
+ÍNDICE CPM (COM TARGET):
+- Cpm: {results['cpm']:.4f}
+
+MÉTRICAS DE QUALIDADE:
+- Nível Sigma: {results['sigma_level']:.2f}σ
+- Yield: {results['yield_pct']:.2f}%
+- PPM Total: {results['ppm_total']:.0f}
+- PPM Abaixo LSL: {results['ppm_below_lsl']:.0f}
+- PPM Acima USL: {results['ppm_above_usl']:.0f}
+
+NÃO-CONFORMIDADES OBSERVADAS:
+- Abaixo do LSL: {results['below_lsl']} ({results['below_lsl']/results['n_samples']*100:.2f}%)
+- Acima do USL: {results['above_usl']} ({results['above_usl']/results['n_samples']*100:.2f}%)
+- Total Fora de Especificação: {results['total_out_of_spec']} ({results['total_out_of_spec']/results['n_samples']*100:.2f}%)
+
+CENTRALIZAÇÃO:
+- Desvio do Centro: {results['offset']:.4f} ({results['offset_pct']:.2f}%)
+
+DADOS BRUTOS:
+"""
+                    
+                    # DataFrame com dados
+                    export_df = pd.DataFrame({
+                        results['variable']: results['data']
+                    })
+                    
+                    csv = report + "\n" + export_df.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Download Relatório Completo (CSV)",
+                        data=csv.encode('utf-8'),
+                        file_name=f"capability_analysis_{results['variable']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("⚠️ Execute a análise antes de exportar.")
+        
+        else:
+            st.warning("⚠️ Nenhuma variável numérica disponível nos dados.")
+    
+    else:
+        st.info("📊 Carregue dados primeiro para realizar análise de capacidade.")
+
+
+
+################################################################################################################################################################################################################################
 
 # ========================= TAB 10: ANOVA =========================
 with tabs[9]:
