@@ -503,13 +503,17 @@ with tabs[1]:
 
 
 # ==============================================================================
-# ========================= TAB 3: ISHIKAWA (COMPLETA E FINAL) =========================
+# ========================= TAB 3: ISHIKAWA (VERSÃO FINAL COM LOAD) =========================
 # ==============================================================================
 
-
+import streamlit as st
+import plotly.graph_objects as go
+import textwrap
+import pandas as pd
+from datetime import datetime
 
 # ==============================================================================
-# FUNÇÃO DE CRIAÇÃO DO DIAGRAMA (Coloque esta função antes da definição das suas tabs)
+# FUNÇÃO DE CRIAÇÃO DO DIAGRAMA
 # ==============================================================================
 def create_definitive_ishikawa(problem, categories_filled):
     """
@@ -619,11 +623,77 @@ def create_definitive_ishikawa(problem, categories_filled):
     return fig
 
 # ==============================================================================
+# FUNÇÃO PARA CARREGAR DADOS DO SUPABASE
+# ==============================================================================
+def load_ishikawa_from_supabase(project_name):
+    """Carrega análise Ishikawa salva do Supabase"""
+    try:
+        from database import supabase
+        
+        response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('tool_name', 'ishikawa').order('created_at', desc=True).limit(1).execute()
+        
+        if response.data and len(response.data) > 0:
+            return response.data[0]['data']
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar dados: {str(e)}")
+        return None
+
+# ==============================================================================
 # INÍCIO DA LÓGICA DA TAB 3
 # ==============================================================================
 with tabs[2]:
     st.header("🎯 Diagrama de Ishikawa (Espinha de Peixe)")
     
+    # Verificar se há projeto selecionado
+    project_name = st.session_state.get('project_name', None)
+    
+    if not project_name:
+        st.warning("⚠️ Nenhum projeto selecionado. Por favor, selecione ou crie um projeto primeiro.")
+        st.stop()
+    
+    # Botão para carregar dados salvos
+    col_load, col_new = st.columns([1, 1])
+    
+    with col_load:
+        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary"):
+            loaded_data = load_ishikawa_from_supabase(project_name)
+            if loaded_data:
+                # Reconstruir a estrutura de dados
+                st.session_state.ishikawa_data = {
+                    'problem': loaded_data.get('problem', ''),
+                    'categories': {}
+                }
+                
+                # Reconstruir categorias
+                for cat_name in ["Método", "Máquina", "Mão de obra", "Material", "Medida", "Meio ambiente"]:
+                    causes_list = loaded_data.get('categories', {}).get(cat_name, [])
+                    causes_dict = {i: cause for i, cause in enumerate(causes_list)}
+                    st.session_state.ishikawa_data['categories'][cat_name] = {
+                        'num_causes': max(3, len(causes_list)),
+                        'causes': causes_dict
+                    }
+                
+                st.success("✅ Análise carregada com sucesso!")
+                st.rerun()
+            else:
+                st.info("ℹ️ Nenhuma análise salva encontrada para este projeto.")
+    
+    with col_new:
+        if st.button("🆕 Nova Análise", use_container_width=True):
+            st.session_state.ishikawa_data = {
+                'problem': '',
+                'categories': {
+                    "Método": {'num_causes': 3, 'causes': {}}, "Máquina": {'num_causes': 3, 'causes': {}},
+                    "Mão de obra": {'num_causes': 3, 'causes': {}}, "Material": {'num_causes': 3, 'causes': {}},
+                    "Medida": {'num_causes': 3, 'causes': {}}, "Meio ambiente": {'num_causes': 3, 'causes': {}}
+                }
+            }
+            st.rerun()
+    
+    st.divider()
+    
+    # Inicializar dados se não existirem
     if 'ishikawa_data' not in st.session_state:
         st.session_state.ishikawa_data = {
             'problem': '',
@@ -711,8 +781,10 @@ with tabs[2]:
 
             if not problem_text:
                 st.warning("⚠️ Por favor, defina o problema central antes de gerar o diagrama.")
+                st.info("💡 **Dica:** Você pode carregar uma análise salva usando o botão '📂 Carregar Análise Salva' no topo da página.")
             elif not categories_filled:
                 st.warning("⚠️ Adicione pelo menos uma causa em qualquer categoria.")
+                st.info("💡 **Dica:** Use a 'Entrada Rápida' para adicionar múltiplas causas de uma vez.")
             else:
                 fig = create_definitive_ishikawa(problem_text, categories_filled)
                 st.plotly_chart(fig, use_container_width=True)
@@ -726,7 +798,7 @@ with tabs[2]:
                     max_cat = max(categories_filled, key=lambda k: len(categories_filled[k]))
                     stat_cols[2].metric("Categoria Principal", max_cat)
     
-    # === LÓGICA DE SALVAMENTO RESTAURADA ===
+    # Lógica de salvamento
     if st.session_state.get('save_ishikawa', False):
         problem_text = st.session_state.ishikawa_data.get('problem', '')
         categories_filled = {
@@ -743,9 +815,6 @@ with tabs[2]:
                 'timestamp': datetime.now().isoformat()
             }
             
-            # Assumindo que 'project_name' está disponível no escopo (ex: st.session_state.project_name)
-            # e que 'save_analysis_to_db' é sua função que interage com o Supabase.
-            project_name = st.session_state.get('project_name', 'default_project') # Exemplo seguro
             if save_analysis_to_db(project_name, "ishikawa", analysis_data):
                 st.success("✅ Análise Ishikawa salva com sucesso no Supabase!")
             else:
@@ -753,7 +822,7 @@ with tabs[2]:
         else:
             st.warning("⚠️ Nada para salvar. Preencha o problema e pelo menos uma causa.")
         
-        st.session_state.save_ishikawa = False # Resetar o flag
+        st.session_state.save_ishikawa = False
 
     if st.session_state.get('export_ishikawa', False):
         export_data = []
@@ -769,6 +838,7 @@ with tabs[2]:
         else:
             st.warning("Não há dados para exportar.")
         st.session_state.export_ishikawa = False
+
 
 
 
