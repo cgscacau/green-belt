@@ -135,23 +135,21 @@ with st.sidebar:
     st.subheader("📑 Fases DMAIC")
     
     pages = [
-        ("🔎 Define", "app/pages/1_🔎_Define.py"),
-        ("📏 Measure", "app/pages/2_📏_Measure.py"),
-        ("📊 Analyze", "app/pages/3_📊_Analyze.py"),
-        ("🛠️ Improve", "app/pages/4_🛠️_Improve.py"),
-        ("✅ Control", "app/pages/5_✅_Control.py")
+        {"icon": "🔎", "label": "Define", "path": "app/pages/1_🔎_Define.py"},
+        {"icon": "🔪", "label": "Measure", "path": "app/pages/2_🔪_Measure.py"},
+        {"icon": "📊", "label": "Analyze", "path": "app/pages/3_📊_Analyze.py"},
+        {"icon": "🛠️", "label": "Improve", "path": "app/pages/4_🛠️_Improve.py"},
+        {"icon": "✅", "label": "Control", "path": "app/pages/5_✅_Control.py"}
     ]
     
-    for page_name, page_path in pages:
-        if st.button(page_name, use_container_width=True, key=f"btn_{page_name}"):
-            st.switch_page(page_path)
+    for page in pages:
+        st.page_link(page["path"], label=page["label"], icon=page["icon"], use_container_width=True)
     
     # Ferramentas adicionais
     st.divider()
     st.subheader("🛠️ Ferramentas")
     
-    if st.button("🔍 Diagnóstico Supabase", use_container_width=True, key="btn_diag"):
-        st.switch_page("app/pages/6_🔍_Diagnostico_Supabase.py")
+    st.page_link("app/pages/6_🔍_Diagnostico_Supabase.py", label="Diagnóstico Supabase", icon="🔍", use_container_width=True)
 
 # Conteúdo principal
 # Criar 3 colunas para métricas
