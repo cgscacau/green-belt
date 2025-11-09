@@ -693,7 +693,7 @@ with tabs[2]:
                 xaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 12]),
                 yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0, 10]),
                 height=600,
-                plot_bgcolor='black'
+                plot_bgcolor='#0E1117'
             )
             
             # Espinha principal
