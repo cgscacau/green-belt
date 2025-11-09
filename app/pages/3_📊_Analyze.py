@@ -1143,7 +1143,7 @@ DADOS:
 
 #############################################################################################################################################################################################################################################################
 
-# ========================= TAB 5: TESTES DE HIPÓTESES (COM SALVAMENTO) =========================
+# ========================= TAB 5: TESTES DE HIPÓTESES (COMPLETO) =========================
 with tabs[4]:
     st.header("🔍 Testes de Hipóteses")
     
@@ -1191,55 +1191,112 @@ with tabs[4]:
     )
     
     if data is not None:
-        if "Teste t (2 amostras)" in test_type:
-            numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-            categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
+        
+        # ============= TESTE T (1 AMOSTRA) =============
+        if test_type == "Teste t (1 amostra)":
+            st.info("**Teste t de 1 amostra:** Compara a média de uma amostra com um valor hipotético (μ₀)")
+            
+            if numeric_cols:
+                value_col = st.selectbox("Variável numérica:", numeric_cols, key="t1_value_col")
+                mu0 = st.number_input("Valor hipotético da média (μ₀):", value=0.0, key="t1_mu0")
+                alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="t1_alpha")
+                
+                col_exec, col_save, col_export = st.columns([1, 1, 1])
+                
+                with col_exec:
+                    execute_test = st.button("🔄 Executar Teste", key="run_t1", use_container_width=True, type="primary")
+                
+                with col_save:
+                    save_test = st.button("💾 Salvar", key="save_t1", use_container_width=True)
+                
+                with col_export:
+                    export_test = st.button("📥 Exportar", key="export_t1", use_container_width=True)
+                
+                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                    if execute_test:
+                        sample_data = data[value_col].dropna()
+                        t_stat, p_value = stats.ttest_1samp(sample_data, mu0)
+                        
+                        st.session_state.hypothesis_results = {
+                            'test_type': test_type,
+                            'value_col': value_col,
+                            'mu0': float(mu0),
+                            'alpha': float(alpha),
+                            't_statistic': float(t_stat),
+                            'p_value': float(p_value),
+                            'sample_mean': float(sample_data.mean()),
+                            'sample_std': float(sample_data.std()),
+                            'n': int(len(sample_data)),
+                            'data': sample_data.tolist(),
+                            'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
+                        }
+                    
+                    results = st.session_state.hypothesis_results
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Estatística t", f"{results['t_statistic']:.4f}")
+                    col2.metric("Valor p", f"{results['p_value']:.4f}")
+                    col3.metric("Média Amostral", f"{results['sample_mean']:.3f}")
+                    
+                    if results['conclusion'] == 'reject_h0':
+                        st.error(f"**❌ Rejeitar H₀:** A média é significativamente diferente de {results['mu0']} (p={results['p_value']:.4f})")
+                    else:
+                        st.success(f"**✅ Não Rejeitar H₀:** Não há evidência de diferença significativa de {results['mu0']} (p={results['p_value']:.4f})")
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Histogram(x=results['data'], name='Dados', nbinsx=30))
+                    fig.add_vline(x=results['sample_mean'], line_dash="dash", line_color="red", annotation_text="Média Amostral")
+                    fig.add_vline(x=results['mu0'], line_dash="dot", line_color="blue", annotation_text="μ₀")
+                    fig.update_layout(title="Distribuição dos Dados")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    if save_test:
+                        if save_analysis_to_db(project_name, "hypothesis_test", results):
+                            st.success("✅ Análise salva!")
+                    
+                    if export_test:
+                        csv = f"Teste t (1 amostra)\nμ₀={results['mu0']}\nt={results['t_statistic']:.4f}\np={results['p_value']:.4f}\n\nDados:\n"
+                        csv += pd.DataFrame({'Valores': results['data']}).to_csv(index=False)
+                        st.download_button("📥 Download CSV", csv.encode('utf-8'), f"teste_t1_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+            else:
+                st.warning("⚠️ Nenhuma variável numérica disponível.")
+        
+        # ============= TESTE T (2 AMOSTRAS) =============
+        elif test_type == "Teste t (2 amostras)":
+            st.info("**Teste t de 2 amostras independentes:** Compara as médias de dois grupos diferentes")
             
             if numeric_cols and categorical_cols:
-                value_col = st.selectbox("Variável numérica:", numeric_cols, key="hyp_value_col")
-                group_col = st.selectbox("Variável de grupo:", categorical_cols, key="hyp_group_col")
+                value_col = st.selectbox("Variável numérica:", numeric_cols, key="t2_value_col")
+                group_col = st.selectbox("Variável de grupo:", categorical_cols, key="t2_group_col")
                 
                 groups = data[group_col].unique()
                 if len(groups) >= 2:
-                    group1 = st.selectbox("Grupo 1:", groups, key="hyp_group1")
-                    group2 = st.selectbox("Grupo 2:", [g for g in groups if g != group1], key="hyp_group2")
+                    group1 = st.selectbox("Grupo 1:", groups, key="t2_group1")
+                    group2 = st.selectbox("Grupo 2:", [g for g in groups if g != group1], key="t2_group2")
+                    alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="t2_alpha")
                     
-                    alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="hyp_alpha")
-                    
-                    # Botões de ação
                     col_exec, col_save, col_export = st.columns([1, 1, 1])
                     
                     with col_exec:
-                        execute_test = st.button("🔄 Executar Teste", key="run_hypothesis", use_container_width=True, type="primary")
-                    
+                        execute_test = st.button("🔄 Executar Teste", key="run_t2", use_container_width=True, type="primary")
                     with col_save:
-                        save_test = st.button("💾 Salvar Análise", key="save_hypothesis", use_container_width=True)
-                    
+                        save_test = st.button("💾 Salvar", key="save_t2", use_container_width=True)
                     with col_export:
-                        export_test = st.button("📥 Exportar Resultados", key="export_hypothesis", use_container_width=True)
+                        export_test = st.button("📥 Exportar", key="export_t2", use_container_width=True)
                     
-                    # Executar teste
-                    if execute_test or 'hypothesis_results' in st.session_state:
-                        
+                    if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
                         if execute_test:
                             data1 = data[data[group_col] == group1][value_col].dropna()
                             data2 = data[data[group_col] == group2][value_col].dropna()
                             
-                            # Teste t
                             t_stat, p_value = stats.ttest_ind(data1, data2)
-                            
-                            # Teste de Levene para homogeneidade de variâncias
                             levene_stat, levene_p = stats.levene(data1, data2)
                             
-                            # Teste de normalidade (Shapiro-Wilk)
-                            shapiro_p1 = stats.shapiro(data1)[1] if len(data1) <= 5000 else None
-                            shapiro_p2 = stats.shapiro(data2)[1] if len(data2) <= 5000 else None
-                            
-                            # Calcular tamanho do efeito (Cohen's d)
                             pooled_std = np.sqrt(((len(data1)-1)*data1.std()**2 + (len(data2)-1)*data2.std()**2) / (len(data1)+len(data2)-2))
                             cohens_d = (data1.mean() - data2.mean()) / pooled_std
                             
-                            # Salvar resultados no session_state
                             st.session_state.hypothesis_results = {
                                 'test_type': test_type,
                                 'value_col': value_col,
@@ -1256,249 +1313,413 @@ with tabs[4]:
                                 'n_group1': int(len(data1)),
                                 'n_group2': int(len(data2)),
                                 'mean_difference': float(data1.mean() - data2.mean()),
-                                'levene_statistic': float(levene_stat),
                                 'levene_p_value': float(levene_p),
                                 'cohens_d': float(cohens_d),
-                                'shapiro_p1': float(shapiro_p1) if shapiro_p1 else None,
-                                'shapiro_p2': float(shapiro_p2) if shapiro_p2 else None,
                                 'data1': data1.tolist(),
                                 'data2': data2.tolist(),
                                 'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
                             }
                         
-                        # Recuperar resultados
-                        results = st.session_state.get('hypothesis_results', None)
+                        results = st.session_state.hypothesis_results
                         
-                        if results:
-                            # Métricas principais
-                            st.subheader("📊 Resultados do Teste")
-                            
-                            col1, col2, col3, col4 = st.columns(4)
-                            
-                            with col1:
-                                st.metric("Estatística t", f"{results['t_statistic']:.4f}")
-                                st.metric("Valor p", f"{results['p_value']:.4f}")
-                            
-                            with col2:
-                                st.metric(f"Média {results['group1']}", f"{results['mean_group1']:.3f}")
-                                st.metric(f"Desvio Padrão", f"{results['std_group1']:.3f}")
-                            
-                            with col3:
-                                st.metric(f"Média {results['group2']}", f"{results['mean_group2']:.3f}")
-                                st.metric(f"Desvio Padrão", f"{results['std_group2']:.3f}")
-                            
-                            with col4:
-                                st.metric("Diferença de Médias", f"{results['mean_difference']:.3f}")
-                                st.metric("Tamanho do Efeito (d)", f"{results['cohens_d']:.3f}")
-                            
-                            # Conclusão destacada
-                            st.divider()
-                            if results['conclusion'] == 'reject_h0':
-                                st.error(f"**❌ Rejeitar H₀:** Existe diferença significativa entre os grupos (p={results['p_value']:.4f} < α={results['alpha']})")
-                            else:
-                                st.success(f"**✅ Não Rejeitar H₀:** Não há evidência de diferença significativa entre os grupos (p={results['p_value']:.4f} ≥ α={results['alpha']})")
-                            
-                            # Pressupostos do teste
-                            st.subheader("📋 Verificação de Pressupostos")
-                            
-                            col_pres1, col_pres2 = st.columns(2)
-                            
-                            with col_pres1:
-                                st.write("**Homogeneidade de Variâncias (Teste de Levene):**")
-                                st.metric("Estatística de Levene", f"{results['levene_statistic']:.4f}")
-                                st.metric("Valor p (Levene)", f"{results['levene_p_value']:.4f}")
-                                
-                                if results['levene_p_value'] > 0.05:
-                                    st.info("✅ Variâncias homogêneas (pressuposto atendido)")
-                                else:
-                                    st.warning("⚠️ Variâncias heterogêneas (considerar teste de Welch)")
-                            
-                            with col_pres2:
-                                st.write("**Normalidade (Teste de Shapiro-Wilk):**")
-                                if results['shapiro_p1'] and results['shapiro_p2']:
-                                    st.metric(f"Valor p {results['group1']}", f"{results['shapiro_p1']:.4f}")
-                                    st.metric(f"Valor p {results['group2']}", f"{results['shapiro_p2']:.4f}")
-                                    
-                                    if results['shapiro_p1'] > 0.05 and results['shapiro_p2'] > 0.05:
-                                        st.info("✅ Ambos os grupos seguem distribuição normal")
-                                    else:
-                                        st.warning("⚠️ Pelo menos um grupo não segue distribuição normal (considerar teste não-paramétrico)")
-                                else:
-                                    st.info("ℹ️ Amostra muito grande para teste de Shapiro-Wilk")
-                            
-                            # Visualizações
-                            st.subheader("📈 Visualizações")
-                            
-                            col_viz1, col_viz2 = st.columns(2)
-                            
-                            with col_viz1:
-                                # Box plot
-                                fig_box = go.Figure()
-                                fig_box.add_trace(go.Box(
-                                    y=results['data1'], 
-                                    name=results['group1'],
-                                    marker_color='lightblue',
-                                    boxmean='sd'
-                                ))
-                                fig_box.add_trace(go.Box(
-                                    y=results['data2'], 
-                                    name=results['group2'],
-                                    marker_color='lightcoral',
-                                    boxmean='sd'
-                                ))
-                                fig_box.update_layout(
-                                    title=f"Comparação: {results['group1']} vs {results['group2']}",
-                                    yaxis_title=results['value_col'],
-                                    showlegend=True,
-                                    height=400
-                                )
-                                st.plotly_chart(fig_box, use_container_width=True)
-                            
-                            with col_viz2:
-                                # Violin plot
-                                fig_violin = go.Figure()
-                                fig_violin.add_trace(go.Violin(
-                                    y=results['data1'], 
-                                    name=results['group1'],
-                                    box_visible=True,
-                                    meanline_visible=True,
-                                    fillcolor='lightblue',
-                                    opacity=0.6
-                                ))
-                                fig_violin.add_trace(go.Violin(
-                                    y=results['data2'], 
-                                    name=results['group2'],
-                                    box_visible=True,
-                                    meanline_visible=True,
-                                    fillcolor='lightcoral',
-                                    opacity=0.6
-                                ))
-                                fig_violin.update_layout(
-                                    title="Distribuição dos Dados",
-                                    yaxis_title=results['value_col'],
-                                    height=400
-                                )
-                                st.plotly_chart(fig_violin, use_container_width=True)
-                            
-                            # Interpretação do tamanho do efeito
-                            st.subheader("💡 Interpretação do Tamanho do Efeito (Cohen's d)")
-                            
-                            d_abs = abs(results['cohens_d'])
-                            if d_abs < 0.2:
-                                effect_interpretation = "**Efeito Trivial** (d < 0.2)"
-                                effect_color = "blue"
-                            elif d_abs < 0.5:
-                                effect_interpretation = "**Efeito Pequeno** (0.2 ≤ d < 0.5)"
-                                effect_color = "green"
-                            elif d_abs < 0.8:
-                                effect_interpretation = "**Efeito Médio** (0.5 ≤ d < 0.8)"
-                                effect_color = "orange"
-                            else:
-                                effect_interpretation = "**Efeito Grande** (d ≥ 0.8)"
-                                effect_color = "red"
-                            
-                            st.markdown(f":{effect_color}[{effect_interpretation}]")
-                            
-                            interpretation_text = f"""
-                            **Resumo da Análise:**
-                            
-                            - **Teste Realizado:** {results['test_type']}
-                            - **Variável Analisada:** {results['value_col']}
-                            - **Grupos Comparados:** {results['group1']} vs {results['group2']}
-                            - **Tamanho das Amostras:** n₁={results['n_group1']}, n₂={results['n_group2']}
-                            - **Diferença Observada:** {results['mean_difference']:.3f} unidades
-                            - **Significância Estatística:** {'Sim' if results['conclusion'] == 'reject_h0' else 'Não'} (α={results['alpha']})
-                            - **Relevância Prática:** {effect_interpretation}
-                            
-                            {'A diferença observada é estatisticamente significativa E possui relevância prática.' if results['conclusion'] == 'reject_h0' and d_abs >= 0.5 else 'Considere tanto a significância estatística quanto o tamanho do efeito ao tomar decisões.'}
-                            """
-                            
-                            st.info(interpretation_text)
-                    
-                    # Salvar análise
-                    if save_test:
-                        results = st.session_state.get('hypothesis_results', None)
-                        if results:
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("Estatística t", f"{results['t_statistic']:.4f}")
+                        col2.metric("Valor p", f"{results['p_value']:.4f}")
+                        col3.metric("Diferença", f"{results['mean_difference']:.3f}")
+                        col4.metric("Cohen's d", f"{results['cohens_d']:.3f}")
+                        
+                        if results['conclusion'] == 'reject_h0':
+                            st.error(f"**❌ Rejeitar H₀:** Diferença significativa (p={results['p_value']:.4f})")
+                        else:
+                            st.success(f"**✅ Não Rejeitar H₀:** Sem diferença significativa (p={results['p_value']:.4f})")
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Box(y=results['data1'], name=results['group1'], boxmean='sd'))
+                        fig.add_trace(go.Box(y=results['data2'], name=results['group2'], boxmean='sd'))
+                        fig.update_layout(title=f"Comparação: {results['group1']} vs {results['group2']}")
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        if save_test:
                             if save_analysis_to_db(project_name, "hypothesis_test", results):
-                                st.success("✅ Teste de hipóteses salvo com sucesso no Supabase!")
-                            else:
-                                st.error("❌ Falha ao salvar a análise.")
-                        else:
-                            st.warning("⚠️ Execute o teste antes de salvar.")
-                    
-                    # Exportar resultados
-                    if export_test:
-                        results = st.session_state.get('hypothesis_results', None)
-                        if results:
-                            # Criar relatório completo
-                            report = f"""
-TESTE DE HIPÓTESES - RELATÓRIO COMPLETO
-========================================
-
-INFORMAÇÕES DO TESTE:
-- Tipo de Teste: {results['test_type']}
-- Variável Analisada: {results['value_col']}
-- Variável de Agrupamento: {results['group_col']}
-- Grupo 1: {results['group1']}
-- Grupo 2: {results['group2']}
-- Nível de Significância (α): {results['alpha']}
-
-RESULTADOS ESTATÍSTICOS:
-- Estatística t: {results['t_statistic']:.4f}
-- Valor p: {results['p_value']:.4f}
-- Conclusão: {'Rejeitar H₀' if results['conclusion'] == 'reject_h0' else 'Não Rejeitar H₀'}
-
-ESTATÍSTICAS DESCRITIVAS:
-Grupo {results['group1']}:
-  - Média: {results['mean_group1']:.3f}
-  - Desvio Padrão: {results['std_group1']:.3f}
-  - N: {results['n_group1']}
-
-Grupo {results['group2']}:
-  - Média: {results['mean_group2']:.3f}
-  - Desvio Padrão: {results['std_group2']:.3f}
-  - N: {results['n_group2']}
-
-ANÁLISE DE EFEITO:
-- Diferença de Médias: {results['mean_difference']:.3f}
-- Tamanho do Efeito (Cohen's d): {results['cohens_d']:.3f}
-
-PRESSUPOSTOS:
-- Teste de Levene (Homogeneidade): p={results['levene_p_value']:.4f}
-"""
-                            if results['shapiro_p1'] and results['shapiro_p2']:
-                                report += f"- Teste de Shapiro-Wilk {results['group1']}: p={results['shapiro_p1']:.4f}\n"
-                                report += f"- Teste de Shapiro-Wilk {results['group2']}: p={results['shapiro_p2']:.4f}\n"
-                            
-                            report += f"\nDADOS BRUTOS:\n"
-                            
-                            # Criar DataFrame com dados
+                                st.success("✅ Análise salva!")
+                        
+                        if export_test:
+                            csv = f"Teste t (2 amostras)\nGrupo 1: {results['group1']}\nGrupo 2: {results['group2']}\nt={results['t_statistic']:.4f}\np={results['p_value']:.4f}\n\n"
                             max_len = max(len(results['data1']), len(results['data2']))
-                            export_df = pd.DataFrame({
-                                f'{results["group1"]}': results['data1'] + [None]*(max_len - len(results['data1'])),
-                                f'{results["group2"]}': results['data2'] + [None]*(max_len - len(results['data2']))
+                            df = pd.DataFrame({
+                                results['group1']: results['data1'] + [None]*(max_len-len(results['data1'])),
+                                results['group2']: results['data2'] + [None]*(max_len-len(results['data2']))
                             })
-                            
-                            csv = report + "\n" + export_df.to_csv(index=False)
-                            
-                            st.download_button(
-                                label="📥 Download Relatório Completo (CSV)",
-                                data=csv.encode('utf-8'),
-                                file_name=f"teste_hipoteses_{results['group1']}_vs_{results['group2']}_{datetime.now().strftime('%Y%m%d')}.csv",
-                                mime="text/csv"
-                            )
-                        else:
-                            st.warning("⚠️ Execute o teste antes de exportar.")
+                            csv += df.to_csv(index=False)
+                            st.download_button("📥 Download CSV", csv.encode('utf-8'), f"teste_t2_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
                 else:
-                    st.warning("⚠️ São necessários pelo menos 2 grupos diferentes para o teste.")
+                    st.warning("⚠️ São necessários pelo menos 2 grupos.")
             else:
-                st.warning("⚠️ São necessárias variáveis numéricas e categóricas para este teste.")
+                st.warning("⚠️ São necessárias variáveis numéricas e categóricas.")
         
-        else:
-            st.info(f"ℹ️ Configuração para '{test_type}' em desenvolvimento. Por enquanto, use 'Teste t (2 amostras)'.")
+        # ============= TESTE T PAREADO =============
+        elif test_type == "Teste t pareado":
+            st.info("**Teste t pareado:** Compara duas medidas do mesmo grupo (antes/depois, pré/pós)")
+            
+            if len(numeric_cols) >= 2:
+                col1_select = st.selectbox("Primeira medida (ex: Antes):", numeric_cols, key="tp_col1")
+                col2_select = st.selectbox("Segunda medida (ex: Depois):", [c for c in numeric_cols if c != col1_select], key="tp_col2")
+                alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="tp_alpha")
+                
+                col_exec, col_save, col_export = st.columns([1, 1, 1])
+                
+                with col_exec:
+                    execute_test = st.button("🔄 Executar Teste", key="run_tp", use_container_width=True, type="primary")
+                with col_save:
+                    save_test = st.button("💾 Salvar", key="save_tp", use_container_width=True)
+                with col_export:
+                    export_test = st.button("📥 Exportar", key="export_tp", use_container_width=True)
+                
+                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                    if execute_test:
+                        paired_data = data[[col1_select, col2_select]].dropna()
+                        data1 = paired_data[col1_select]
+                        data2 = paired_data[col2_select]
+                        
+                        t_stat, p_value = stats.ttest_rel(data1, data2)
+                        differences = data2 - data1
+                        
+                        st.session_state.hypothesis_results = {
+                            'test_type': test_type,
+                            'col1': col1_select,
+                            'col2': col2_select,
+                            'alpha': float(alpha),
+                            't_statistic': float(t_stat),
+                            'p_value': float(p_value),
+                            'mean_col1': float(data1.mean()),
+                            'mean_col2': float(data2.mean()),
+                            'mean_difference': float(differences.mean()),
+                            'std_difference': float(differences.std()),
+                            'n': int(len(data1)),
+                            'data1': data1.tolist(),
+                            'data2': data2.tolist(),
+                            'differences': differences.tolist(),
+                            'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
+                        }
+                    
+                    results = st.session_state.hypothesis_results
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Estatística t", f"{results['t_statistic']:.4f}")
+                    col2.metric("Valor p", f"{results['p_value']:.4f}")
+                    col3.metric("Diferença Média", f"{results['mean_difference']:.3f}")
+                    
+                    if results['conclusion'] == 'reject_h0':
+                        st.error(f"**❌ Rejeitar H₀:** Há diferença significativa entre as medidas (p={results['p_value']:.4f})")
+                    else:
+                        st.success(f"**✅ Não Rejeitar H₀:** Não há diferença significativa (p={results['p_value']:.4f})")
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=list(range(len(results['data1']))), y=results['data1'], mode='markers+lines', name=results['col1']))
+                    fig.add_trace(go.Scatter(x=list(range(len(results['data2']))), y=results['data2'], mode='markers+lines', name=results['col2']))
+                    fig.update_layout(title="Comparação Pareada", xaxis_title="Observação", yaxis_title="Valor")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    if save_test:
+                        if save_analysis_to_db(project_name, "hypothesis_test", results):
+                            st.success("✅ Análise salva!")
+                    
+                    if export_test:
+                        csv = f"Teste t Pareado\n{results['col1']} vs {results['col2']}\nt={results['t_statistic']:.4f}\np={results['p_value']:.4f}\n\n"
+                        df = pd.DataFrame({
+                            results['col1']: results['data1'],
+                            results['col2']: results['data2'],
+                            'Diferença': results['differences']
+                        })
+                        csv += df.to_csv(index=False)
+                        st.download_button("📥 Download CSV", csv.encode('utf-8'), f"teste_pareado_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+            else:
+                st.warning("⚠️ São necessárias pelo menos 2 variáveis numéricas.")
+        
+        # ============= MANN-WHITNEY U =============
+        elif test_type == "Mann-Whitney U":
+            st.info("**Teste de Mann-Whitney U:** Alternativa não-paramétrica ao teste t de 2 amostras")
+            
+            if numeric_cols and categorical_cols:
+                value_col = st.selectbox("Variável numérica:", numeric_cols, key="mw_value_col")
+                group_col = st.selectbox("Variável de grupo:", categorical_cols, key="mw_group_col")
+                
+                groups = data[group_col].unique()
+                if len(groups) >= 2:
+                    group1 = st.selectbox("Grupo 1:", groups, key="mw_group1")
+                    group2 = st.selectbox("Grupo 2:", [g for g in groups if g != group1], key="mw_group2")
+                    alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="mw_alpha")
+                    
+                    col_exec, col_save, col_export = st.columns([1, 1, 1])
+                    
+                    with col_exec:
+                        execute_test = st.button("🔄 Executar Teste", key="run_mw", use_container_width=True, type="primary")
+                    with col_save:
+                        save_test = st.button("💾 Salvar", key="save_mw", use_container_width=True)
+                    with col_export:
+                        export_test = st.button("📥 Exportar", key="export_mw", use_container_width=True)
+                    
+                    if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                        if execute_test:
+                            data1 = data[data[group_col] == group1][value_col].dropna()
+                            data2 = data[data[group_col] == group2][value_col].dropna()
+                            
+                            u_stat, p_value = stats.mannwhitneyu(data1, data2, alternative='two-sided')
+                            
+                            st.session_state.hypothesis_results = {
+                                'test_type': test_type,
+                                'value_col': value_col,
+                                'group_col': group_col,
+                                'group1': str(group1),
+                                'group2': str(group2),
+                                'alpha': float(alpha),
+                                'u_statistic': float(u_stat),
+                                'p_value': float(p_value),
+                                'median_group1': float(data1.median()),
+                                'median_group2': float(data2.median()),
+                                'n_group1': int(len(data1)),
+                                'n_group2': int(len(data2)),
+                                'data1': data1.tolist(),
+                                'data2': data2.tolist(),
+                                'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
+                            }
+                        
+                        results = st.session_state.hypothesis_results
+                        
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Estatística U", f"{results['u_statistic']:.0f}")
+                        col2.metric("Valor p", f"{results['p_value']:.4f}")
+                        col3.metric("Diferença Medianas", f"{results['median_group1'] - results['median_group2']:.3f}")
+                        
+                        if results['conclusion'] == 'reject_h0':
+                            st.error(f"**❌ Rejeitar H₀:** Distribuições são diferentes (p={results['p_value']:.4f})")
+                        else:
+                            st.success(f"**✅ Não Rejeitar H₀:** Distribuições não diferem significativamente (p={results['p_value']:.4f})")
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Box(y=results['data1'], name=results['group1']))
+                        fig.add_trace(go.Box(y=results['data2'], name=results['group2']))
+                        fig.update_layout(title="Teste de Mann-Whitney U")
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        if save_test:
+                            if save_analysis_to_db(project_name, "hypothesis_test", results):
+                                st.success("✅ Análise salva!")
+                        
+                        if export_test:
+                            csv = f"Mann-Whitney U\nU={results['u_statistic']:.0f}\np={results['p_value']:.4f}\n\n"
+                            max_len = max(len(results['data1']), len(results['data2']))
+                            df = pd.DataFrame({
+                                results['group1']: results['data1'] + [None]*(max_len-len(results['data1'])),
+                                results['group2']: results['data2'] + [None]*(max_len-len(results['data2']))
+                            })
+                            csv += df.to_csv(index=False)
+                            st.download_button("📥 Download CSV", csv.encode('utf-8'), f"mann_whitney_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+        
+        # ============= WILCOXON =============
+        elif test_type == "Wilcoxon":
+            st.info("**Teste de Wilcoxon:** Alternativa não-paramétrica ao teste t pareado")
+            
+            if len(numeric_cols) >= 2:
+                col1_select = st.selectbox("Primeira medida:", numeric_cols, key="w_col1")
+                col2_select = st.selectbox("Segunda medida:", [c for c in numeric_cols if c != col1_select], key="w_col2")
+                alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="w_alpha")
+                
+                col_exec, col_save, col_export = st.columns([1, 1, 1])
+                
+                with col_exec:
+                    execute_test = st.button("🔄 Executar Teste", key="run_w", use_container_width=True, type="primary")
+                with col_save:
+                    save_test = st.button("💾 Salvar", key="save_w", use_container_width=True)
+                with col_export:
+                    export_test = st.button("📥 Exportar", key="export_w", use_container_width=True)
+                
+                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                    if execute_test:
+                        paired_data = data[[col1_select, col2_select]].dropna()
+                        data1 = paired_data[col1_select]
+                        data2 = paired_data[col2_select]
+                        
+                        w_stat, p_value = stats.wilcoxon(data1, data2)
+                        
+                        st.session_state.hypothesis_results = {
+                            'test_type': test_type,
+                            'col1': col1_select,
+                            'col2': col2_select,
+                            'alpha': float(alpha),
+                            'w_statistic': float(w_stat),
+                            'p_value': float(p_value),
+                            'median_col1': float(data1.median()),
+                            'median_col2': float(data2.median()),
+                            'n': int(len(data1)),
+                            'data1': data1.tolist(),
+                            'data2': data2.tolist(),
+                            'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
+                        }
+                    
+                    results = st.session_state.hypothesis_results
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Estatística W", f"{results['w_statistic']:.0f}")
+                    col2.metric("Valor p", f"{results['p_value']:.4f}")
+                    col3.metric("Diferença Medianas", f"{results['median_col2'] - results['median_col1']:.3f}")
+                    
+                    if results['conclusion'] == 'reject_h0':
+                        st.error(f"**❌ Rejeitar H₀:** Há diferença significativa (p={results['p_value']:.4f})")
+                    else:
+                        st.success(f"**✅ Não Rejeitar H₀:** Não há diferença significativa (p={results['p_value']:.4f})")
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Box(y=results['data1'], name=results['col1']))
+                    fig.add_trace(go.Box(y=results['data2'], name=results['col2']))
+                    fig.update_layout(title="Teste de Wilcoxon")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    if save_test:
+                        if save_analysis_to_db(project_name, "hypothesis_test", results):
+                            st.success("✅ Análise salva!")
+                    
+                    if export_test:
+                        csv = f"Wilcoxon\nW={results['w_statistic']:.0f}\np={results['p_value']:.4f}\n\n"
+                        df = pd.DataFrame({
+                            results['col1']: results['data1'],
+                            results['col2']: results['data2']
+                        })
+                        csv += df.to_csv(index=False)
+                        st.download_button("📥 Download CSV", csv.encode('utf-8'), f"wilcoxon_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+        
+        # ============= QUI-QUADRADO =============
+        elif test_type == "Qui-Quadrado":
+            st.info("**Teste Qui-Quadrado:** Testa independência entre duas variáveis categóricas")
+            
+            if len(categorical_cols) >= 2:
+                cat1 = st.selectbox("Primeira variável categórica:", categorical_cols, key="chi_cat1")
+                cat2 = st.selectbox("Segunda variável categórica:", [c for c in categorical_cols if c != cat1], key="chi_cat2")
+                alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="chi_alpha")
+                
+                col_exec, col_save, col_export = st.columns([1, 1, 1])
+                
+                with col_exec:
+                    execute_test = st.button("🔄 Executar Teste", key="run_chi", use_container_width=True, type="primary")
+                with col_save:
+                    save_test = st.button("💾 Salvar", key="save_chi", use_container_width=True)
+                with col_export:
+                    export_test = st.button("📥 Exportar", key="export_chi", use_container_width=True)
+                
+                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                    if execute_test:
+                        contingency_table = pd.crosstab(data[cat1], data[cat2])
+                        chi2, p_value, dof, expected = stats.chi2_contingency(contingency_table)
+                        
+                        st.session_state.hypothesis_results = {
+                            'test_type': test_type,
+                            'cat1': cat1,
+                            'cat2': cat2,
+                            'alpha': float(alpha),
+                            'chi2_statistic': float(chi2),
+                            'p_value': float(p_value),
+                            'degrees_of_freedom': int(dof),
+                            'contingency_table': contingency_table.to_dict(),
+                            'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
+                        }
+                    
+                    results = st.session_state.hypothesis_results
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("χ²", f"{results['chi2_statistic']:.4f}")
+                    col2.metric("Valor p", f"{results['p_value']:.4f}")
+                    col3.metric("Graus de Liberdade", results['degrees_of_freedom'])
+                    
+                    if results['conclusion'] == 'reject_h0':
+                        st.error(f"**❌ Rejeitar H₀:** As variáveis são dependentes (p={results['p_value']:.4f})")
+                    else:
+                        st.success(f"**✅ Não Rejeitar H₀:** As variáveis são independentes (p={results['p_value']:.4f})")
+                    
+                    st.subheader("Tabela de Contingência")
+                    contingency_df = pd.DataFrame(results['contingency_table'])
+                    st.dataframe(contingency_df)
+                    
+                    if save_test:
+                        if save_analysis_to_db(project_name, "hypothesis_test", results):
+                            st.success("✅ Análise salva!")
+                    
+                    if export_test:
+                        csv = f"Qui-Quadrado\nχ²={results['chi2_statistic']:.4f}\np={results['p_value']:.4f}\n\nTabela de Contingência:\n"
+                        csv += contingency_df.to_csv()
+                        st.download_button("📥 Download CSV", csv.encode('utf-8'), f"qui_quadrado_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+            else:
+                st.warning("⚠️ São necessárias pelo menos 2 variáveis categóricas.")
+        
+        # ============= FISHER EXACT =============
+        elif test_type == "Fisher Exact":
+            st.info("**Teste Exato de Fisher:** Alternativa ao Qui-Quadrado para amostras pequenas (tabelas 2x2)")
+            
+            if len(categorical_cols) >= 2:
+                cat1 = st.selectbox("Primeira variável categórica:", categorical_cols, key="f_cat1")
+                cat2 = st.selectbox("Segunda variável categórica:", [c for c in categorical_cols if c != cat1], key="f_cat2")
+                alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="f_alpha")
+                
+                col_exec, col_save, col_export = st.columns([1, 1, 1])
+                
+                with col_exec:
+                    execute_test = st.button("🔄 Executar Teste", key="run_f", use_container_width=True, type="primary")
+                with col_save:
+                    save_test = st.button("💾 Salvar", key="save_f", use_container_width=True)
+                with col_export:
+                    export_test = st.button("📥 Exportar", key="export_f", use_container_width=True)
+                
+                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                    if execute_test:
+                        contingency_table = pd.crosstab(data[cat1], data[cat2])
+                        
+                        if contingency_table.shape == (2, 2):
+                            table_array = contingency_table.values
+                            oddsratio, p_value = stats.fisher_exact(table_array)
+                            
+                            st.session_state.hypothesis_results = {
+                                'test_type': test_type,
+                                'cat1': cat1,
+                                'cat2': cat2,
+                                'alpha': float(alpha),
+                                'odds_ratio': float(oddsratio),
+                                'p_value': float(p_value),
+                                'contingency_table': contingency_table.to_dict(),
+                                'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
+                            }
+                        else:
+                            st.error("⚠️ O teste exato de Fisher requer uma tabela 2x2. Use Qui-Quadrado para tabelas maiores.")
+                            st.session_state.hypothesis_results = None
+                    
+                    results = st.session_state.get('hypothesis_results')
+                    
+                    if results:
+                        col1, col2 = st.columns(2)
+                        col1.metric("Odds Ratio", f"{results['odds_ratio']:.4f}")
+                        col2.metric("Valor p", f"{results['p_value']:.4f}")
+                        
+                        if results['conclusion'] == 'reject_h0':
+                            st.error(f"**❌ Rejeitar H₀:** Há associação significativa (p={results['p_value']:.4f})")
+                        else:
+                            st.success(f"**✅ Não Rejeitar H₀:** Não há associação significativa (p={results['p_value']:.4f})")
+                        
+                        st.subheader("Tabela de Contingência 2x2")
+                        contingency_df = pd.DataFrame(results['contingency_table'])
+                        st.dataframe(contingency_df)
+                        
+                        if save_test:
+                            if save_analysis_to_db(project_name, "hypothesis_test", results):
+                                st.success("✅ Análise salva!")
+                        
+                        if export_test:
+                            csv = f"Fisher Exact\nOdds Ratio={results['odds_ratio']:.4f}\np={results['p_value']:.4f}\n\nTabela:\n"
+                            csv += contingency_df.to_csv()
+                            st.download_button("📥 Download CSV", csv.encode('utf-8'), f"fisher_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+            else:
+                st.warning("⚠️ São necessárias pelo menos 2 variáveis categóricas.")
     
     else:
         st.info("📊 Carregue dados primeiro para realizar testes de hipóteses.")
+
 
 
 #######################################################################################################################################################################################################################################################################
