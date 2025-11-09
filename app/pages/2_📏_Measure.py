@@ -427,13 +427,42 @@ with tab2:
             # Estatísticas básicas
             col1, col2, col3 = st.columns(3)
             
-            numeric_cols = msa_data.select_dtypes(include=[np.number]).columns
+            # Obter todas as colunas (não apenas numéricas)
+            all_cols = msa_data.columns.tolist()
+            
+            # Tentar converter colunas para numérico
+            numeric_cols = []
+            for col in all_cols:
+                try:
+                    # Tentar converter para numérico
+                    pd.to_numeric(msa_data[col], errors='coerce')
+                    numeric_cols.append(col)
+                except:
+                    pass
+            
+            # Se não encontrou colunas numéricas, mostrar todas
+            if len(numeric_cols) == 0:
+                st.warning("⚠️ Nenhuma coluna numérica detectada automaticamente. Mostrando todas as colunas.")
+                numeric_cols = all_cols
             
             if len(numeric_cols) > 0:
                 analysis_col = st.selectbox("Selecione a coluna para análise:", numeric_cols)
                 
+                # Converter a coluna selecionada para numérico
+                try:
+                    msa_data[analysis_col] = pd.to_numeric(msa_data[analysis_col], errors='coerce')
+                except:
+                    st.error(f"❌ Não foi possível converter a coluna '{analysis_col}' para valores numéricos")
+                    st.stop()
+
+                
                 if analysis_col:
-                    data_col = msa_data[analysis_col].dropna()
+                    # Garantir que é numérico e remover valores nulos
+                    data_col = pd.to_numeric(msa_data[analysis_col], errors='coerce').dropna()
+                    
+                    if len(data_col) == 0:
+                        st.error("❌ A coluna selecionada não contém valores numéricos válidos")
+                        st.stop()
                     
                     with col1:
                         st.metric("Média", f"{data_col.mean():.3f}")
@@ -552,7 +581,19 @@ with tab3:
             
             st.subheader("📊 Análise de Capacidade do Processo")
             
-            numeric_cols = process_data.select_dtypes(include=[np.number]).columns
+            all_cols = process_data.columns.tolist()
+            numeric_cols = []
+            
+            for col in all_cols:
+                try:
+                    pd.to_numeric(process_data[col], errors='coerce')
+                    numeric_cols.append(col)
+                except:
+                    pass
+            
+            if len(numeric_cols) == 0:
+                st.warning("⚠️ Nenhuma coluna numérica detectada. Mostrando todas.")
+                numeric_cols = all_cols
             
             if len(numeric_cols) > 0:
                 col1, col2 = st.columns([2, 1])
@@ -733,13 +774,13 @@ with tab4:
                     st.plotly_chart(fig, use_container_width=True)
             
             elif chart_type == "Box Plot":
-                col = st.selectbox("Selecione a variável:", viz_data.select_dtypes(include=[np.number]).columns)
+                col = st.selectbox("Selecione a variável:", [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()])
                 if col:
                     fig = px.box(viz_data, y=col, title=f"Box Plot - {col}")
                     st.plotly_chart(fig, use_container_width=True)
             
             elif chart_type == "Histograma":
-                col = st.selectbox("Selecione a variável:", viz_data.select_dtypes(include=[np.number]).columns)
+                col = st.selectbox("Selecione a variável:", [col for col in viz_data.columns if pd.to_numeric(viz_data[col], errors='coerce').notna().any()])
                 bins = st.slider("Número de bins:", 10, 50, 20)
                 if col:
                     fig = px.histogram(viz_data, x=col, nbins=bins, title=f"Histograma - {col}")
