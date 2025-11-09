@@ -2912,7 +2912,7 @@ DADOS:
 
 ################################################################################################################################################################################################################################
 
-# ========================= TAB 10: ANOVA (COM SALVAMENTO E SEM RESET) =========================
+# ========================= TAB 10: ANOVA (VERSÃO FINAL CORRIGIDA) =========================
 with tabs[9]:
     st.header("🎲 ANOVA - Análise de Variância")
     
@@ -2926,98 +2926,47 @@ with tabs[9]:
     # Botões de carregar e nova análise
     col_load, col_new = st.columns([1, 1])
     
-# VERSÃO CORRIGIDA DO BOTÃO CARREGAR
     with col_load:
-        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_anova"):
+        if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_anova_btn"):
             if not supabase:
                 st.error("❌ Conexão com Supabase não disponível.")
             else:
                 try:
-                    # Buscar com filtros corretos
-                    response = (supabase.table('analyses')
-                               .select('*')
-                               .eq('project_name', project_name)
-                               .eq('analysis_type', 'anova_analysis')
-                               .order('created_at', desc=True)
-                               .limit(1)
-                               .execute())
+                    # Buscar análises ANOVA
+                    response = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'anova_analysis').order('created_at', desc=True).limit(1).execute()
                     
                     if response.data and len(response.data) > 0:
-                        # Verificar se tem a chave 'results'
-                        if 'results' in response.data[0]:
-                            loaded_data = response.data[0]['results']
-                        elif 'data' in response.data[0]:  # Caso alternativo
-                            loaded_data = response.data[0]['data']
+                        # Tentar pegar os dados da chave correta
+                        loaded_item = response.data[0]
+                        
+                        # Verificar qual chave contém os dados
+                        if 'results' in loaded_item:
+                            loaded_data = loaded_item['results']
+                        elif 'data' in loaded_item:
+                            loaded_data = loaded_item['data']
                         else:
-                            st.error("❌ Estrutura de dados inválida.")
-                            st.json(response.data[0])  # Mostrar estrutura
+                            st.error("❌ Estrutura de dados não reconhecida.")
+                            st.write("**Debug - Chaves disponíveis:**", list(loaded_item.keys()))
                             st.stop()
                         
-                        # Validar dados carregados
-                        required_keys = ['response_var', 'factor_var', 'f_statistic', 'p_value']
-                        if all(key in loaded_data for key in required_keys):
+                        # Validar se tem os campos necessários
+                        if isinstance(loaded_data, dict) and 'response_var' in loaded_data:
                             st.session_state.anova_results = loaded_data
                             st.success("✅ Análise ANOVA carregada com sucesso!")
                             st.rerun()
                         else:
-                            st.error("❌ Dados incompletos ou corrompidos.")
-                            st.write("Chaves encontradas:", list(loaded_data.keys()))
+                            st.error("❌ Dados incompletos.")
+                            st.write("**Debug - Estrutura:**", type(loaded_data))
+                            if isinstance(loaded_data, dict):
+                                st.write("**Chaves:**", list(loaded_data.keys()))
                     else:
                         st.info("ℹ️ Nenhuma análise ANOVA salva encontrada para este projeto.")
                         
-                        # Sugestão: mostrar análises disponíveis
-                        all_analyses = supabase.table('analyses').select('analysis_type, created_at').eq('project_name', project_name).execute()
-                        if all_analyses.data:
-                            st.write("**Análises disponíveis neste projeto:**")
-                            for item in all_analyses.data:
-                                st.write(f"- {item['analysis_type']} ({item['created_at']})")
-                        
                 except Exception as e:
-                    st.error(f"Erro ao carregar dados: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
-
-    # CÓDIGO DE DEBUG TEMPORÁRIO
-with col_load:
-    if st.button("📂 Carregar Análise Salva", use_container_width=True, type="secondary", key="load_anova"):
-        if not supabase:
-            st.error("❌ Conexão com Supabase não disponível.")
-        else:
-            try:
-                # DEBUG: Ver todas as análises
-                st.write("🔍 **DEBUG - Buscando análises...**")
-                response = supabase.table('analyses').select('*').eq('project_name', project_name).execute()
-                st.write(f"Total de análises encontradas: {len(response.data)}")
-                
-                # Mostrar tipos de análises disponíveis
-                if response.data:
-                    analysis_types = [item['analysis_type'] for item in response.data]
-                    st.write(f"Tipos disponíveis: {set(analysis_types)}")
-                
-                # Buscar ANOVA especificamente
-                response_anova = supabase.table('analyses').select('*').eq('project_name', project_name).eq('analysis_type', 'anova_analysis').order('created_at', desc=True).execute()
-                
-                st.write(f"Análises ANOVA encontradas: {len(response_anova.data)}")
-                
-                if response_anova.data and len(response_anova.data) > 0:
-                    st.write("✅ Dados encontrados!")
-                    st.json(response_anova.data[0])  # Mostrar estrutura dos dados
-                    
-                    loaded_data = response_anova.data[0]['results']
-                    st.session_state.anova_results = loaded_data
-                    st.success("✅ Análise ANOVA carregada com sucesso!")
-                    st.rerun()
-                else:
-                    st.info("ℹ️ Nenhuma análise ANOVA salva encontrada para este projeto.")
-            except Exception as e:
-                st.error(f"Erro ao carregar dados: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc())
-
-
+                    st.error(f"❌ Erro ao carregar: {str(e)}")
     
     with col_new:
-        if st.button("🆕 Nova Análise", use_container_width=True, key="new_anova"):
+        if st.button("🆕 Nova Análise", use_container_width=True, key="new_anova_btn"):
             if 'anova_results' in st.session_state:
                 del st.session_state.anova_results
             st.rerun()
@@ -3031,21 +2980,19 @@ with col_load:
         if numeric_cols and categorical_cols:
             response_var = st.selectbox("Variável resposta (numérica):", numeric_cols, key="anova_resp")
             factor_var = st.selectbox("Fator (categórica):", categorical_cols, key="anova_factor")
-            
-            # Nível de significância
             alpha = st.slider("Nível de significância (α):", 0.01, 0.10, 0.05, key="anova_alpha")
             
             # Botões de ação
             col_exec, col_save, col_export = st.columns([1, 1, 1])
             
             with col_exec:
-                execute_analysis = st.button("🔄 Executar ANOVA", key="run_anova", use_container_width=True, type="primary")
+                execute_analysis = st.button("🔄 Executar ANOVA", key="run_anova_btn", use_container_width=True, type="primary")
             
             with col_save:
-                save_analysis_btn = st.button("💾 Salvar Análise", key="save_anova", use_container_width=True)
+                save_analysis_btn = st.button("💾 Salvar Análise", key="save_anova_btn", use_container_width=True)
             
             with col_export:
-                export_analysis_btn = st.button("📥 Exportar Resultados", key="export_anova", use_container_width=True)
+                export_analysis_btn = st.button("📥 Exportar Resultados", key="export_anova_btn", use_container_width=True)
             
             # Executar análise
             current_results = st.session_state.get('anova_results') or {}
@@ -3076,39 +3023,27 @@ with col_load:
                             })
                     
                     if len(groups) >= 2:
-                        # Converter para arrays numpy para cálculos
                         groups_np = [np.array(g) for g in groups]
-                        
-                        # ANOVA
                         f_stat, p_value = f_oneway(*groups_np)
                         
-                        # Cálculos detalhados da tabela ANOVA
                         all_data = np.concatenate(groups_np)
                         total_mean = all_data.mean()
                         n_total = len(all_data)
                         
-                        # Soma dos quadrados
-                        sst = np.sum((all_data - total_mean)**2)  # Total
-                        ssb = sum([len(g) * (g.mean() - total_mean)**2 for g in groups_np])  # Entre grupos
-                        ssw = sst - ssb  # Dentro dos grupos
+                        sst = np.sum((all_data - total_mean)**2)
+                        ssb = sum([len(g) * (g.mean() - total_mean)**2 for g in groups_np])
+                        ssw = sst - ssb
                         
-                        # Graus de liberdade
-                        k = len(groups)  # número de grupos
+                        k = len(groups)
                         df_between = k - 1
                         df_within = n_total - k
                         df_total = n_total - 1
                         
-                        # Quadrados médios
                         msb = ssb / df_between
                         msw = ssw / df_within
-                        
-                        # R² (eta quadrado)
                         r_squared = ssb / sst
-                        
-                        # Omega quadrado (tamanho do efeito)
                         omega_squared = (ssb - (df_between * msw)) / (sst + msw)
                         
-                        # Salvar no session_state
                         st.session_state.anova_results = {
                             'response_var': response_var,
                             'factor_var': factor_var,
@@ -3133,10 +3068,9 @@ with col_load:
                             'conclusion': 'reject_h0' if p_value < alpha else 'fail_to_reject_h0'
                         }
                     else:
-                        st.error("❌ São necessários pelo menos 2 grupos para realizar ANOVA.")
+                        st.error("❌ São necessários pelo menos 2 grupos.")
                         st.stop()
                 
-                # Recuperar resultados
                 results = st.session_state.get('anova_results')
                 
                 if results:
@@ -3144,250 +3078,80 @@ with col_load:
                     st.subheader("📊 Tabela ANOVA")
                     
                     anova_table = pd.DataFrame({
-                        'Fonte de Variação': ['Entre Grupos', 'Dentro dos Grupos', 'Total'],
-                        'Soma dos Quadrados (SQ)': [
-                            f"{results['ssb']:.4f}",
-                            f"{results['ssw']:.4f}",
-                            f"{results['sst']:.4f}"
-                        ],
-                        'Graus de Liberdade (GL)': [
-                            results['df_between'],
-                            results['df_within'],
-                            results['df_total']
-                        ],
-                        'Quadrado Médio (QM)': [
-                            f"{results['msb']:.4f}",
-                            f"{results['msw']:.4f}",
-                            '-'
-                        ],
-                        'F': [
-                            f"{results['f_statistic']:.4f}",
-                            '-',
-                            '-'
-                        ],
-                        'p-valor': [
-                            f"{results['p_value']:.4f}",
-                            '-',
-                            '-'
-                        ]
+                        'Fonte': ['Entre Grupos', 'Dentro dos Grupos', 'Total'],
+                        'SQ': [f"{results['ssb']:.4f}", f"{results['ssw']:.4f}", f"{results['sst']:.4f}"],
+                        'GL': [results['df_between'], results['df_within'], results['df_total']],
+                        'QM': [f"{results['msb']:.4f}", f"{results['msw']:.4f}", '-'],
+                        'F': [f"{results['f_statistic']:.4f}", '-', '-'],
+                        'p-valor': [f"{results['p_value']:.4f}", '-', '-']
                     })
                     
                     st.dataframe(anova_table, use_container_width=True, hide_index=True)
                     
-                    # Métricas principais
-                    st.markdown("---")
+                    # Métricas
                     col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("F", f"{results['f_statistic']:.4f}")
+                    col2.metric("p-valor", f"{results['p_value']:.4f}")
+                    col3.metric("R²", f"{results['r_squared']:.4f}")
+                    col4.metric("Ω²", f"{results['omega_squared']:.4f}")
                     
-                    col1.metric("Estatística F", f"{results['f_statistic']:.4f}")
-                    col2.metric("Valor p", f"{results['p_value']:.4f}")
-                    col3.metric("R² (Eta²)", f"{results['r_squared']:.4f}")
-                    col4.metric("Ω² (Omega²)", f"{results['omega_squared']:.4f}")
-                    
-                    # Interpretação
+                    # Conclusão
                     st.markdown("---")
                     if results['conclusion'] == 'reject_h0':
-                        st.error(f"**❌ Rejeitar H₀:** Existe diferença significativa entre os grupos (p={results['p_value']:.4f} < α={results['alpha']})")
+                        st.error(f"**❌ Rejeitar H₀** (p={results['p_value']:.4f} < {results['alpha']})")
                     else:
-                        st.success(f"**✅ Não Rejeitar H₀:** Não há evidência de diferença significativa entre os grupos (p={results['p_value']:.4f} ≥ α={results['alpha']})")
+                        st.success(f"**✅ Não Rejeitar H₀** (p={results['p_value']:.4f} ≥ {results['alpha']})")
                     
-                    # Interpretação do tamanho do efeito
-                    if results['r_squared'] < 0.01:
-                        effect_size = "Trivial"
-                    elif results['r_squared'] < 0.06:
-                        effect_size = "Pequeno"
-                    elif results['r_squared'] < 0.14:
-                        effect_size = "Médio"
-                    else:
-                        effect_size = "Grande"
-                    
-                    st.info(f"**Tamanho do Efeito (R²):** {effect_size} - {results['r_squared']*100:.2f}% da variabilidade é explicada pelo fator.")
-                    
-                    # Estatísticas descritivas por grupo
-                    st.markdown("---")
-                    st.subheader("📋 Estatísticas Descritivas por Grupo")
-                    
+                    # Estatísticas por grupo
+                    st.subheader("📋 Estatísticas por Grupo")
                     stats_df = pd.DataFrame(results['group_stats'])
-                    stats_df.columns = ['Grupo', 'N', 'Média', 'Desvio Padrão', 'Mínimo', 'Máximo']
+                    st.dataframe(stats_df, use_container_width=True, hide_index=True)
                     
-                    styled_stats = stats_df.style.format({
-                        'Média': '{:.3f}',
-                        'Desvio Padrão': '{:.3f}',
-                        'Mínimo': '{:.3f}',
-                        'Máximo': '{:.3f}'
-                    }).background_gradient(subset=['Média'], cmap='RdYlGn')
-                    
-                    st.dataframe(styled_stats, use_container_width=True, hide_index=True)
-                    
-                    # Visualizações
-                    st.markdown("---")
-                    st.subheader("📈 Visualizações")
-                    
-                    col_viz1, col_viz2 = st.columns(2)
-                    
-                    with col_viz1:
-                        # Box plots
-                        fig_box = go.Figure()
-                        for group_data, label in zip(results['groups'], results['labels']):
-                            fig_box.add_trace(go.Box(
-                                y=group_data, 
-                                name=label,
-                                boxmean='sd'
-                            ))
-                        
-                        fig_box.update_layout(
-                            title=f"Box Plot: {results['response_var']} por {results['factor_var']}",
-                            yaxis_title=results['response_var'],
-                            xaxis_title=results['factor_var'],
-                            height=400
-                        )
-                        st.plotly_chart(fig_box, use_container_width=True)
-                    
-                    with col_viz2:
-                        # Gráfico de médias com barras de erro
-                        means = [stat['mean'] for stat in results['group_stats']]
-                        stds = [stat['std'] for stat in results['group_stats']]
-                        
-                        fig_means = go.Figure()
-                        fig_means.add_trace(go.Bar(
-                            x=results['labels'],
-                            y=means,
-                            error_y=dict(type='data', array=stds),
-                            marker_color='lightblue'
-                        ))
-                        
-                        fig_means.update_layout(
-                            title="Médias com Desvio Padrão",
-                            xaxis_title=results['factor_var'],
-                            yaxis_title=f"Média de {results['response_var']}",
-                            height=400
-                        )
-                        st.plotly_chart(fig_means, use_container_width=True)
-                    
-                    # Teste Post-hoc (Tukey)
-                    if results['conclusion'] == 'reject_h0':
-                        st.markdown("---")
-                        st.subheader("🔍 Teste Post-hoc (Tukey HSD)")
-                        
-                        if st.checkbox("Executar teste de Tukey HSD", key="run_tukey"):
-                            try:
-                                from scipy.stats import tukey_hsd
-                                
-                                groups_np = [np.array(g) for g in results['groups']]
-                                tukey_result = tukey_hsd(*groups_np)
-                                
-                                st.write("**Matriz de p-valores (comparações pareadas):**")
-                                
-                                # Criar DataFrame com os p-valores
-                                tukey_df = pd.DataFrame(
-                                    tukey_result.pvalue,
-                                    index=results['labels'],
-                                    columns=results['labels']
-                                )
-                                
-                                # Estilizar
-                                styled_tukey = tukey_df.style.format("{:.4f}").background_gradient(cmap='RdYlGn_r', vmin=0, vmax=0.05)
-                                st.dataframe(styled_tukey, use_container_width=True)
-                                
-                                st.caption("💡 Valores em vermelho (p < 0.05) indicam diferenças significativas entre os grupos.")
-                                
-                                # Listar comparações significativas
-                                significant_pairs = []
-                                for i, label1 in enumerate(results['labels']):
-                                    for j, label2 in enumerate(results['labels']):
-                                        if i < j and tukey_result.pvalue[i, j] < results['alpha']:
-                                            significant_pairs.append(f"{label1} vs {label2} (p={tukey_result.pvalue[i, j]:.4f})")
-                                
-                                if significant_pairs:
-                                    st.success("**Comparações Significativas:**")
-                                    for pair in significant_pairs:
-                                        st.write(f"- {pair}")
-                                else:
-                                    st.info("Nenhuma comparação pareada foi significativa.")
-                                
-                            except Exception as e:
-                                st.error(f"Erro ao executar Tukey HSD: {str(e)}")
-                                st.info("💡 Teste de Tukey disponível apenas para Python 3.11+")
+                    # Box plot
+                    st.subheader("📊 Visualização")
+                    fig = go.Figure()
+                    for group_data, label in zip(results['groups'], results['labels']):
+                        fig.add_trace(go.Box(y=group_data, name=label, boxmean='sd'))
+                    fig.update_layout(title=f"{results['response_var']} por {results['factor_var']}", height=400)
+                    st.plotly_chart(fig, use_container_width=True)
             
-            # Salvar análise
+            # Salvar
             if save_analysis_btn:
                 results = st.session_state.get('anova_results')
                 if results:
                     if save_analysis_to_db(project_name, "anova_analysis", results):
-                        st.success("✅ Análise ANOVA salva com sucesso!")
+                        st.success("✅ Salvo com sucesso!")
                     else:
                         st.error("❌ Falha ao salvar.")
                 else:
-                    st.warning("⚠️ Execute a análise antes de salvar.")
+                    st.warning("⚠️ Execute a análise primeiro.")
             
-            # Exportar resultados
+            # Exportar
             if export_analysis_btn:
                 results = st.session_state.get('anova_results')
                 if results:
-                    report = f"""
-ANÁLISE DE VARIÂNCIA (ANOVA) - RELATÓRIO COMPLETO
-==================================================
+                    report = f"""ANOVA - {results['response_var']} por {results['factor_var']}
+F={results['f_statistic']:.4f}, p={results['p_value']:.4f}
+R²={results['r_squared']:.4f}
 
-VARIÁVEIS:
-- Variável Resposta: {results['response_var']}
-- Fator: {results['factor_var']}
-- Nível de Significância: {results['alpha']}
-
-RESULTADOS DA ANOVA:
-- Estatística F: {results['f_statistic']:.4f}
-- Valor p: {results['p_value']:.4f}
-- Conclusão: {'Rejeitar H₀ - Diferença significativa' if results['conclusion'] == 'reject_h0' else 'Não Rejeitar H₀ - Sem diferença significativa'}
-
-TABELA ANOVA:
-Fonte                 | SQ        | GL  | QM        | F         | p-valor
----------------------|-----------|-----|-----------|-----------|----------
-Entre Grupos         | {results['ssb']:.4f} | {results['df_between']} | {results['msb']:.4f} | {results['f_statistic']:.4f} | {results['p_value']:.4f}
-Dentro dos Grupos    | {results['ssw']:.4f} | {results['df_within']} | {results['msw']:.4f} | -         | -
-Total                | {results['sst']:.4f} | {results['df_total']} | -         | -         | -
-
-TAMANHO DO EFEITO:
-- R² (Eta²): {results['r_squared']:.4f} ({results['r_squared']*100:.2f}%)
-- Ω² (Omega²): {results['omega_squared']:.4f}
-
-ESTATÍSTICAS POR GRUPO:
+GRUPOS:
 """
-                    
                     for stat in results['group_stats']:
-                        report += f"\n{stat['group']}:"
-                        report += f"\n  N: {stat['n']}"
-                        report += f"\n  Média: {stat['mean']:.4f}"
-                        report += f"\n  Desvio Padrão: {stat['std']:.4f}"
-                        report += f"\n  Mínimo: {stat['min']:.4f}"
-                        report += f"\n  Máximo: {stat['max']:.4f}\n"
-                    
-                    report += "\nDADOS BRUTOS:\n"
-                    
-                    # Criar DataFrame com todos os dados
-                    max_len = max(len(g) for g in results['groups'])
-                    export_data = {}
-                    for label, group in zip(results['labels'], results['groups']):
-                        padded_group = group + [None] * (max_len - len(group))
-                        export_data[label] = padded_group
-                    
-                    export_df = pd.DataFrame(export_data)
-                    csv = report + "\n" + export_df.to_csv(index=False)
+                        report += f"\n{stat['group']}: n={stat['n']}, média={stat['mean']:.3f}, DP={stat['std']:.3f}"
                     
                     st.download_button(
-                        "📥 Download Relatório Completo (CSV)",
-                        csv.encode('utf-8'),
-                        f"anova_{results['response_var']}_by_{results['factor_var']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        "📥 Download CSV",
+                        report.encode('utf-8'),
+                        f"anova_{datetime.now().strftime('%Y%m%d')}.csv",
                         "text/csv"
                     )
                 else:
-                    st.warning("⚠️ Execute a análise antes de exportar.")
+                    st.warning("⚠️ Execute a análise primeiro.")
         
         else:
-            if not numeric_cols:
-                st.warning("⚠️ Nenhuma variável numérica disponível.")
-            if not categorical_cols:
-                st.warning("⚠️ Nenhuma variável categórica disponível.")
-    
+            st.warning("⚠️ Dados insuficientes para ANOVA.")
     else:
-        st.info("📊 Carregue dados primeiro para realizar análise ANOVA.")
+        st.info("📊 Carregue dados primeiro.")
 
 
 
