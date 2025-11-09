@@ -623,151 +623,474 @@ with tab1:
 
 ############################################################################################################################################################################################################################################
 
-# ========================= TAB 2: MSA =========================
+# ========================= TAB 2: MSA (MEASUREMENT SYSTEM ANALYSIS) =========================
 
 with tab2:
-    st.header("Measurement System Analysis (MSA)")
+    st.header("🔍 Measurement System Analysis (MSA)")
+    st.markdown("**Objetivo:** Avaliar a **Repetibilidade** e **Reprodutibilidade** do sistema de medição")
     
-    st.info("Análise do Sistema de Medição - Repetibilidade e Reprodutibilidade (R&R)")
+    st.divider()
     
-    uploaded_file = st.file_uploader(
-        "Faça upload dos dados de MSA (CSV, Excel)",
-        type=['csv', 'xlsx', 'xls'],
-        key="msa_upload"
-    )
+    # Informações sobre MSA
+    with st.expander("ℹ️ O que é MSA?"):
+        st.markdown("""
+        **MSA (Measurement System Analysis)** avalia se o sistema de medição é adequado para o uso pretendido.
+        
+        **Principais componentes:**
+        - **Repetibilidade:** Variação quando a mesma pessoa mede a mesma peça várias vezes
+        - **Reprodutibilidade:** Variação entre diferentes operadores medindo a mesma peça
+        - **Estabilidade:** Variação ao longo do tempo
+        - **Linearidade:** Precisão em toda a faixa de medição
+        
+        **Critérios de aceitação:**
+        - < 10% da tolerância: Sistema **EXCELENTE**
+        - 10-30% da tolerância: Sistema **ACEITÁVEL**
+        - > 30% da tolerância: Sistema **PRECISA MELHORAR**
+        """)
+    
+    st.divider()
+    
+    # Upload de arquivo
+    col_upload1, col_upload2 = st.columns([2, 1])
+    
+    with col_upload1:
+        uploaded_file = st.file_uploader(
+            "📤 Faça upload dos dados de MSA (CSV, Excel)",
+            type=['csv', 'xlsx', 'xls'],
+            help="Arquivo deve conter as medições realizadas",
+            key="msa_upload"
+        )
+    
+    with col_upload2:
+        st.info("""
+        **Formato esperado:**
+        - Colunas com medições
+        - Valores numéricos
+        - Sem células vazias
+        """)
     
     if uploaded_file is not None:
         try:
+            # Detectar extensão
             file_extension = uploaded_file.name.split('.')[-1].lower()
             
-            if file_extension == 'csv':
-                msa_data = pd.read_csv(uploaded_file)
-            elif file_extension in ['xlsx', 'xls']:
-                msa_data = pd.read_excel(uploaded_file)
-            else:
-                st.error("❌ Formato não suportado")
-                st.stop()
+            st.info(f"📄 Arquivo: **{uploaded_file.name}**")
             
-            if st.checkbox("🧹 Tentar converter colunas automaticamente para numérico", value=True, key="auto_clean_msa"):
-                msa_data = auto_clean_numeric_columns(msa_data)
+            # Ler arquivo
+            with st.spinner("Lendo arquivo..."):
+                if file_extension == 'csv':
+                    try:
+                        msa_data = pd.read_csv(uploaded_file, encoding='utf-8')
+                    except UnicodeDecodeError:
+                        uploaded_file.seek(0)
+                        msa_data = pd.read_csv(uploaded_file, encoding='latin-1')
+                        st.warning("⚠️ Arquivo lido com encoding latin-1")
+                
+                elif file_extension in ['xlsx', 'xls']:
+                    msa_data = pd.read_excel(uploaded_file)
+                
+                else:
+                    st.error("❌ Formato não suportado")
+                    st.stop()
+            
+            st.success(f"✅ Arquivo carregado: {len(msa_data)} linhas, {len(msa_data.columns)} colunas")
+            
+            # Opção de conversão automática
+            if st.checkbox("🧹 Converter colunas automaticamente para numérico", value=True, key="auto_clean_msa"):
+                with st.spinner("Convertendo..."):
+                    msa_data = auto_clean_numeric_columns(msa_data)
                 st.success("✅ Conversão automática aplicada")
             
-            if supabase and st.button("💾 Salvar dados MSA no projeto"):
-                msa_data_clean = clean_dataframe_for_json(msa_data)
-                if save_process_data(st.session_state.project_name, msa_data_clean):
-                    st.success("✅ Dados salvos no projeto!")
+            # Botão salvar
+            if supabase:
+                if st.button("💾 Salvar dados MSA no projeto", key="save_msa_btn"):
+                    with st.spinner("Salvando..."):
+                        msa_data_clean = clean_dataframe_for_json(msa_data)
+                        if save_process_data(st.session_state.project_name, msa_data_clean):
+                            st.success("✅ Dados MSA salvos no projeto!")
+                            st.balloons()
+                        else:
+                            st.error("❌ Erro ao salvar")
             
-            st.subheader("📊 Dados Carregados")
-            st.dataframe(msa_data.head(), use_container_width=True)
+            st.divider()
             
+            # Preview dos dados
+            st.subheader("📊 Preview dos Dados")
+            
+            col_prev1, col_prev2 = st.columns([3, 1])
+            
+            with col_prev1:
+                num_rows_preview = st.slider("Linhas para visualizar:", 5, 50, 10, key="msa_preview")
+            
+            with col_prev2:
+                st.metric("Total de Linhas", len(msa_data))
+            
+            st.dataframe(msa_data.head(num_rows_preview), use_container_width=True)
+            
+            st.divider()
+            
+            # Detectar colunas numéricas
             all_cols = msa_data.columns.tolist()
             numeric_cols = []
             
             for col in all_cols:
                 try:
-                    pd.to_numeric(msa_data[col], errors='coerce')
-                    numeric_cols.append(col)
+                    test_numeric = pd.to_numeric(msa_data[col], errors='coerce')
+                    if test_numeric.notna().sum() > 0:
+                        numeric_cols.append(col)
                 except:
                     pass
             
             if len(numeric_cols) == 0:
-                st.warning("⚠️ Nenhuma coluna numérica detectada automaticamente. Mostrando todas as colunas.")
+                st.warning("⚠️ Nenhuma coluna numérica detectada. Mostrando todas as colunas.")
                 numeric_cols = all_cols
             
+            st.info(f"📊 Colunas numéricas detectadas: **{len(numeric_cols)}**")
+            
+            # Seleção de coluna para análise
             if len(numeric_cols) > 0:
-                analysis_col = st.selectbox("Selecione a coluna para análise:", numeric_cols)
                 
+                col_select1, col_select2 = st.columns([2, 1])
+                
+                with col_select1:
+                    analysis_col = st.selectbox(
+                        "📌 Selecione a coluna para análise MSA:",
+                        numeric_cols,
+                        key="msa_col_select"
+                    )
+                
+                with col_select2:
+                    # Mostrar info da coluna
+                    non_null = msa_data[analysis_col].notna().sum()
+                    st.metric("Valores Válidos", non_null)
+                
+                # Converter e limpar dados
                 try:
                     msa_data[analysis_col] = pd.to_numeric(msa_data[analysis_col], errors='coerce')
-                except:
-                    st.error(f"❌ Não foi possível converter a coluna '{analysis_col}' para valores numéricos")
-                    st.stop()
-                
-                if analysis_col:
-                    data_col = pd.to_numeric(msa_data[analysis_col], errors='coerce').dropna()
+                    data_col = msa_data[analysis_col].dropna()
                     
                     if len(data_col) == 0:
                         st.error("❌ A coluna selecionada não contém valores numéricos válidos")
                         st.stop()
                     
-                    col1, col2, col3 = st.columns(3)
+                    st.success(f"✅ {len(data_col)} medições válidas encontradas")
+                    
+                    st.divider()
+                    
+                    # ============= ESTATÍSTICAS DESCRITIVAS =============
+                    st.subheader("📊 Estatísticas Descritivas")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        st.metric("Média", f"{data_col.mean():.3f}")
-                        st.metric("Desvio Padrão", f"{data_col.std():.3f}")
+                        st.metric("Média", f"{data_col.mean():.4f}")
+                        st.metric("Mediana", f"{data_col.median():.4f}")
                     
                     with col2:
-                        st.metric("Mínimo", f"{data_col.min():.3f}")
-                        st.metric("Máximo", f"{data_col.max():.3f}")
+                        st.metric("Desvio Padrão", f"{data_col.std():.4f}")
+                        st.metric("Variância", f"{data_col.var():.4f}")
                     
                     with col3:
-                        st.metric("Amplitude", f"{data_col.max() - data_col.min():.3f}")
-                        st.metric("CV%", f"{(data_col.std()/data_col.mean()*100):.1f}%")
+                        st.metric("Mínimo", f"{data_col.min():.4f}")
+                        st.metric("Máximo", f"{data_col.max():.4f}")
                     
-                    st.subheader("📈 Gráfico de Controle")
+                    with col4:
+                        amplitude = data_col.max() - data_col.min()
+                        st.metric("Amplitude", f"{amplitude:.4f}")
+                        cv = (data_col.std() / data_col.mean() * 100) if data_col.mean() != 0 else 0
+                        st.metric("CV%", f"{cv:.2f}%")
+                    
+                    st.divider()
+                    
+                    # ============= GRÁFICO DE CONTROLE =============
+                    st.subheader("📈 Gráfico de Controle (X-bar)")
                     
                     mean = data_col.mean()
                     std = data_col.std()
-                    ucl = mean + 3*std
-                    lcl = mean - 3*std
+                    ucl = mean + 3 * std
+                    lcl = mean - 3 * std
                     
                     fig = go.Figure()
                     
+                    # Pontos das medições
                     fig.add_trace(go.Scatter(
-                        x=list(range(len(data_col))),
+                        x=list(range(1, len(data_col) + 1)),
                         y=data_col,
                         mode='lines+markers',
                         name='Medições',
-                        line=dict(color='blue')
+                        line=dict(color='#3498DB', width=2),
+                        marker=dict(size=6, color='#3498DB')
                     ))
                     
-                    fig.add_hline(y=mean, line_dash="dash", line_color="green", 
-                                 annotation_text=f"Média: {mean:.2f}")
-                    fig.add_hline(y=ucl, line_dash="dash", line_color="red",
-                                 annotation_text=f"UCL: {ucl:.2f}")
-                    fig.add_hline(y=lcl, line_dash="dash", line_color="red",
-                                 annotation_text=f"LCL: {lcl:.2f}")
+                    # Linha média
+                    fig.add_hline(
+                        y=mean, 
+                        line_dash="solid", 
+                        line_color="#2ECC71",
+                        line_width=2,
+                        annotation_text=f"Média: {mean:.3f}",
+                        annotation_position="right"
+                    )
+                    
+                    # Limites de controle
+                    fig.add_hline(
+                        y=ucl, 
+                        line_dash="dash", 
+                        line_color="#E74C3C",
+                        line_width=2,
+                        annotation_text=f"UCL: {ucl:.3f}",
+                        annotation_position="right"
+                    )
+                    
+                    fig.add_hline(
+                        y=lcl, 
+                        line_dash="dash", 
+                        line_color="#E74C3C",
+                        line_width=2,
+                        annotation_text=f"LCL: {lcl:.3f}",
+                        annotation_position="right"
+                    )
+                    
+                    # Destacar pontos fora de controle
+                    out_of_control = data_col[(data_col > ucl) | (data_col < lcl)]
+                    if len(out_of_control) > 0:
+                        out_indices = out_of_control.index.tolist()
+                        fig.add_trace(go.Scatter(
+                            x=[i+1 for i in out_indices],
+                            y=out_of_control.values,
+                            mode='markers',
+                            name='Fora de Controle',
+                            marker=dict(size=10, color='red', symbol='x')
+                        ))
                     
                     fig.update_layout(
-                        title="Gráfico de Controle X-bar",
-                        xaxis_title="Observação",
-                        yaxis_title="Valor",
-                        height=400
+                        title="Gráfico de Controle X-bar (Médias)",
+                        xaxis_title="Número da Observação",
+                        yaxis_title=f"Valor de {analysis_col}",
+                        height=500,
+                        hovermode='x unified'
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    st.subheader("📊 Análise de Capacidade")
+                    # Alertas de pontos fora de controle
+                    if len(out_of_control) > 0:
+                        st.warning(f"⚠️ **{len(out_of_control)} pontos fora dos limites de controle!**")
+                        st.write("Pontos fora de controle:", out_indices)
+                    else:
+                        st.success("✅ Todos os pontos estão dentro dos limites de controle")
                     
-                    tolerance = st.number_input("Digite a tolerância do processo:", value=0.1, format="%.4f")
+                    st.divider()
+                    
+                    # ============= ANÁLISE DE CAPACIDADE DO SISTEMA =============
+                    st.subheader("📊 Análise de Capacidade do Sistema de Medição")
+                    
+                    col_tol1, col_tol2 = st.columns([2, 1])
+                    
+                    with col_tol1:
+                        tolerance = st.number_input(
+                            "Digite a tolerância do processo (range de especificação):",
+                            min_value=0.0001,
+                            value=0.1,
+                            format="%.4f",
+                            help="Diferença entre LSL e USL do processo",
+                            key="msa_tolerance"
+                        )
+                    
+                    with col_tol2:
+                        st.info("""
+                        **Tolerância =**
+                        USL - LSL
+                        """)
                     
                     if tolerance > 0:
+                        # Cálculos
                         measurement_variation = std
                         percent_tolerance = (measurement_variation / tolerance) * 100
                         
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Variação da Medição", f"{measurement_variation:.4f}")
-                        with col2:
-                            st.metric("% da Tolerância", f"{percent_tolerance:.1f}%")
+                        # GRR (Gage R&R)
+                        grr_percent = (std * 5.15 / tolerance) * 100
+                        
+                        col_result1, col_result2, col_result3 = st.columns(3)
+                        
+                        with col_result1:
+                            st.metric(
+                                "Variação da Medição (σ)", 
+                                f"{measurement_variation:.4f}",
+                                help="Desvio padrão das medições"
+                            )
+                        
+                        with col_result2:
+                            st.metric(
+                                "% da Tolerância", 
+                                f"{percent_tolerance:.1f}%",
+                                help="Variação como % da tolerância"
+                            )
+                        
+                        with col_result3:
+                            st.metric(
+                                "GRR (%)", 
+                                f"{grr_percent:.1f}%",
+                                help="Gage R&R como % da tolerância"
+                            )
+                        
+                        st.divider()
+                        
+                        # Interpretação
+                        st.subheader("💡 Interpretação dos Resultados")
                         
                         if percent_tolerance < 10:
-                            st.success("✅ Sistema de medição EXCELENTE (< 10%)")
+                            st.success("""
+                            ✅ **Sistema de Medição EXCELENTE**
+                            
+                            - Variação < 10% da tolerância
+                            - Sistema adequado para uso
+                            - Baixo impacto nas decisões
+                            """)
                         elif percent_tolerance < 30:
-                            st.warning("⚠️ Sistema de medição ACEITÁVEL (10-30%)")
+                            st.warning("""
+                            ⚠️ **Sistema de Medição ACEITÁVEL**
+                            
+                            - Variação entre 10-30% da tolerância
+                            - Pode ser usado com cautela
+                            - Considere melhorias se possível
+                            """)
                         else:
-                            st.error("❌ Sistema de medição PRECISA MELHORAR (> 30%)")
-            
+                            st.error("""
+                            ❌ **Sistema de Medição PRECISA MELHORAR**
+                            
+                            - Variação > 30% da tolerância
+                            - Sistema inadequado para uso crítico
+                            - **Ações necessárias:**
+                              - Calibrar equipamento
+                              - Treinar operadores
+                              - Melhorar procedimento
+                              - Considerar novo equipamento
+                            """)
+                        
+                        # Tabela de classificação
+                        st.divider()
+                        st.subheader("📋 Tabela de Classificação GRR")
+                        
+                        classification_df = pd.DataFrame({
+                            'GRR (%)': ['< 10%', '10% - 30%', '> 30%'],
+                            'Classificação': ['Excelente', 'Aceitável', 'Inaceitável'],
+                            'Ação': ['Sistema adequado', 'Usar com cautela', 'Melhorar sistema']
+                        })
+                        
+                        st.dataframe(classification_df, use_container_width=True, hide_index=True)
+                        
+                        # Distribuição das medições
+                        st.divider()
+                        st.subheader("📊 Distribuição das Medições")
+                        
+                        fig_hist = go.Figure()
+                        
+                        fig_hist.add_trace(go.Histogram(
+                            x=data_col,
+                            nbinsx=30,
+                            name='Medições',
+                            marker_color='#3498DB',
+                            opacity=0.7
+                        ))
+                        
+                        fig_hist.add_vline(
+                            x=mean,
+                            line_dash="dash",
+                            line_color="red",
+                            annotation_text=f"Média: {mean:.3f}"
+                        )
+                        
+                        fig_hist.update_layout(
+                            title="Histograma das Medições",
+                            xaxis_title="Valor",
+                            yaxis_title="Frequência",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_hist, use_container_width=True)
+                    
+                    # Exportar resultados
+                    st.divider()
+                    
+                    if st.button("📥 Exportar Relatório MSA", use_container_width=True):
+                        report = f"""
+RELATÓRIO MSA - MEASUREMENT SYSTEM ANALYSIS
+============================================
+
+Projeto: {st.session_state.project_name}
+Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+Variável Analisada: {analysis_col}
+
+ESTATÍSTICAS DESCRITIVAS:
+- Número de Medições: {len(data_col)}
+- Média: {mean:.4f}
+- Desvio Padrão: {std:.4f}
+- Mínimo: {data_col.min():.4f}
+- Máximo: {data_col.max():.4f}
+- Amplitude: {amplitude:.4f}
+
+LIMITES DE CONTROLE:
+- UCL: {ucl:.4f}
+- Média: {mean:.4f}
+- LCL: {lcl:.4f}
+- Pontos Fora de Controle: {len(out_of_control)}
+
+ANÁLISE DE CAPACIDADE:
+- Tolerância do Processo: {tolerance:.4f}
+- Variação da Medição: {measurement_variation:.4f}
+- % da Tolerância: {percent_tolerance:.2f}%
+- GRR: {grr_percent:.2f}%
+
+CONCLUSÃO:
+"""
+                        if percent_tolerance < 10:
+                            report += "Sistema de Medição EXCELENTE - Adequado para uso"
+                        elif percent_tolerance < 30:
+                            report += "Sistema de Medição ACEITÁVEL - Usar com cautela"
+                        else:
+                            report += "Sistema de Medição INADEQUADO - Requer melhorias"
+                        
+                        st.download_button(
+                            label="📄 Download Relatório (TXT)",
+                            data=report.encode('utf-8'),
+                            file_name=f"relatorio_msa_{analysis_col}_{datetime.now().strftime('%Y%m%d')}.txt",
+                            mime="text/plain"
+                        )
+                
+                except Exception as e:
+                    st.error(f"❌ Erro ao processar coluna: {str(e)}")
+                    st.write("**Detalhes:**", type(e).__name__)
+        
         except Exception as e:
-            st.error(f"Erro ao processar arquivo: {str(e)}")
+            st.error(f"❌ Erro ao processar arquivo: {str(e)}")
+            
+            with st.expander("🐛 Detalhes do Erro"):
+                st.write("**Tipo:**", type(e).__name__)
+                st.write("**Mensagem:**", str(e))
+    
     else:
+        # Tentar carregar dados salvos
+        st.info("📤 Nenhum arquivo carregado. Faça upload dos dados de MSA.")
+        
         if supabase:
             saved_data = load_process_data(st.session_state.project_name)
             if saved_data is not None:
-                st.info("📂 Dados anteriores encontrados no projeto")
-                if st.button("Carregar dados salvos"):
-                    st.session_state.msa_data = saved_data
-                    st.rerun()
+                st.divider()
+                st.success("📂 Dados anteriores encontrados no projeto")
+                
+                col_load1, col_load2 = st.columns([1, 2])
+                
+                with col_load1:
+                    if st.button("📥 Carregar dados salvos", use_container_width=True):
+                        st.session_state.msa_data = saved_data
+                        st.rerun()
+                
+                with col_load2:
+                    st.caption(f"Dados salvos: {len(saved_data)} linhas, {len(saved_data.columns)} colunas")
+
+
+############################################################################################################################################################################################################################################
 
 # ========================= TAB 3: PROCESS CAPABILITY =========================
 
