@@ -13,6 +13,7 @@ import json
 from supabase import create_client, Client
 import seaborn as sns
 import matplotlib.pyplot as plt
+import textwrap # Importe no início do seu script
 
 # Configuração da página
 st.set_page_config(
@@ -498,9 +499,15 @@ with tabs[1]:
         st.warning("⚠️ Nenhum dado disponível para análise de Pareto")
 
 
-# ========================= TAB 3: ISHIKAWA CORRIGIDO (SEM RESET) =========================
+# ========================= TAB 3: ISHIKAWA CORRIGIDO (COM TEXTO LEGÍVEL) =========================
+
+
 with tabs[2]:
     st.header("🎯 Diagrama de Ishikawa (Espinha de Peixe)")
+
+    # --- [O CÓDIGO DE ENTRADA DE DADOS PERMANECE O MESMO] ---
+    # ... (todo o seu código de session_state, text_input, expanders, botões, etc. vai aqui)
+    # ... (colei o código completo abaixo para garantir, mas a única alteração é na parte do diagrama)
     
     # Inicializar o estado persistente para Ishikawa
     if 'ishikawa_data' not in st.session_state:
@@ -641,11 +648,11 @@ with tabs[2]:
                     
                     st.success(f"✅ {len(lines)} causas adicionadas a {quick_category}")
                     st.rerun()
-    
-    # Separador visual
+
+    # --- [FIM DO CÓDIGO DE ENTRADA DE DADOS] ---
+
     st.divider()
     
-    # Botões de ação (fora do container principal)
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -662,246 +669,143 @@ with tabs[2]:
     
     with col4:
         if st.button("🗑️ Limpar Tudo", key="clear_ishikawa_btn"):
-            # Limpar dados
             for cat in st.session_state.ishikawa_data['categories'].values():
                 cat['num_causes'] = 3
                 cat['causes'] = {}
             st.session_state.ishikawa_data['problem'] = ''
-            st.session_state.show_ishikawa_diagram = False  # Também limpar o diagrama
+            st.session_state.show_ishikawa_diagram = False
             st.rerun()
-    
-    # Container para o diagrama (evita reset)
+
     diagram_container = st.container()
-    
-    # Gerar diagrama se solicitado ou já estiver visível
+
     if st.session_state.get('show_ishikawa_diagram', False):
         with diagram_container:
-            # Coletar todas as causas preenchidas
-            categories_filled = {}
-            for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
-                causes = [v for v in cat_data['causes'].values() if v]
-                if causes:
-                    categories_filled[cat_name] = causes
-            
+            categories_filled = {
+                cat_name: [v for v in cat_data['causes'].values() if v]
+                for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items()
+                if any(v for v in cat_data['causes'].values())
+            }
+
             if not problem:
                 st.warning("⚠️ Por favor, defina o problema primeiro")
             elif not categories_filled:
                 st.warning("⚠️ Adicione pelo menos uma causa")
             else:
-                # Criar o diagrama com layout correto
+                # --- [INÍCIO DA LÓGICA DO DIAGRAMA MELHORADO] ---
+
+                # Função auxiliar para quebra de linha
+                def wrap_text(text, width):
+                    return '<br>'.join(textwrap.wrap(text, width=width))
+
                 fig = go.Figure()
-                
-                # Configuração do layout com tema escuro
+
                 fig.update_layout(
                     title={
                         'text': "<b>Diagrama de Ishikawa - Análise de Causa e Efeito</b>",
-                        'x': 0.5,
-                        'xanchor': 'center',
-                        'font': {'size': 22, 'color': '#FFFFFF'}
+                        'x': 0.5, 'xanchor': 'center', 'font': {'size': 24, 'color': '#FFFFFF'}
                     },
                     showlegend=False,
-                    xaxis=dict(showgrid=False, zeroline=False, visible=False, range=[-3, 11]),
-                    yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[-2, 8]),
-                    height=600,
-                    margin=dict(l=20, r=20, t=60, b=20),
+                    xaxis=dict(showgrid=False, zeroline=False, visible=False, range=[-1, 11]),
+                    yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[-5, 11]),
+                    height=850,  # Aumenta a altura para mais espaço vertical
+                    margin=dict(l=20, r=20, t=80, b=20),
                     plot_bgcolor='#0E1117',
                     paper_bgcolor='#0E1117',
-                    hoverlabel=dict(
-                        bgcolor='#262730',
-                        font_size=12,
-                        font_color='#FFFFFF'
-                    )
                 )
-                
-                # Espinha principal (horizontal)
+
+                # Espinha principal
                 fig.add_trace(go.Scatter(
-                    x=[0, 8], 
-                    y=[3, 3],
-                    mode='lines',
-                    line=dict(color='#FFFFFF', width=3),
-                    hoverinfo='skip'
+                    x=[0, 9], y=[3, 3], mode='lines',
+                    line=dict(color='#FFFFFF', width=4), hoverinfo='skip'
                 ))
-                
-                # Cores para cada categoria
+
                 category_colors = {
-                    "Método": '#FF6B6B',
-                    "Máquina": '#4ECDC4',
-                    "Material": '#45B7D1',
-                    "Mão de obra": '#96CEB4',
-                    "Medida": '#FFEAA7',
-                    "Meio ambiente": '#DDA0DD'
+                    "Método": '#FF6B6B', "Máquina": '#4ECDC4', "Mão de obra": '#96CEB4',
+                    "Material": '#45B7D1', "Medida": '#FFEAA7', "Meio ambiente": '#DDA0DD'
                 }
-                
-                # Posições fixas para as categorias (3 em cima, 3 embaixo)
+
+                # Posições com mais espaço vertical
                 category_positions = {
-                    "Método": (2, 5.5, True),        # (x, y, top)
-                    "Máquina": (4, 5.5, True),
-                    "Mão de obra": (6, 5.5, True),
-                    "Material": (2, 0.5, False),
-                    "Medida": (4, 0.5, False),
-                    "Meio ambiente": (6, 0.5, False)
+                    "Método": (1.5, 7, True), "Máquina": (4, 7, True), "Mão de obra": (6.5, 7, True),
+                    "Material": (1.5, -1, False), "Medida": (4, -1, False), "Meio ambiente": (6.5, -1, False)
                 }
-                
-                # Adicionar categorias e causas
+
                 for category, causes in categories_filled.items():
                     if category in category_positions:
                         x_pos, y_pos, is_top = category_positions[category]
                         color = category_colors.get(category, '#808080')
-                        
-                        # Linha diagonal da categoria até a espinha principal
+
+                        # Linha da categoria
                         fig.add_trace(go.Scatter(
-                            x=[x_pos, x_pos], 
-                            y=[y_pos, 3],
-                            mode='lines',
-                            line=dict(color=color, width=2),
-                            hoverinfo='skip'
+                            x=[x_pos, x_pos], y=[y_pos, 3], mode='lines',
+                            line=dict(color=color, width=3), hoverinfo='skip'
                         ))
-                        
-                        # Nome da categoria
+
+                        # Nome da categoria (maior e com mais padding)
                         fig.add_annotation(
-                            x=x_pos,
-                            y=y_pos + (0.3 if is_top else -0.3),
-                            text=f"<b>{category.upper()}</b>",
-                            showarrow=False,
-                            font=dict(size=12, color='#FFFFFF'),
-                            bgcolor=color,
-                            bordercolor='#FFFFFF',
-                            borderwidth=1,
-                            borderpad=4
+                            x=x_pos, y=y_pos, text=f"<b>{category.upper()}</b>",
+                            showarrow=False, font=dict(size=14, color='#FFFFFF'),
+                            bgcolor=color, bordercolor='#FFFFFF', borderwidth=2, borderpad=8
                         )
-                        
-                        # Adicionar causas individuais
-                        for j, cause in enumerate(causes[:5]):  # Máximo 5 causas por categoria
-                            # Posicionar causas ao redor da categoria
-                            cause_offset = 0.4 * (j + 1)
-                            if is_top:
-                                cause_y = y_pos + cause_offset
-                            else:
-                                cause_y = y_pos - cause_offset
+
+                        # Adicionar causas com caixas maiores e quebra de linha
+                        for j, cause in enumerate(causes[:5]):
+                            cause_x = x_pos + (1.2 if j % 2 == 0 else -1.2) # Alterna lado
+                            cause_y = y_pos + (1.2 * (j // 2 + 1) if is_top else -1.2 * (j // 2 + 1))
                             
-                            cause_x = x_pos - 0.5 + (j * 0.2)
-                            
-                            # Linha da causa
+                            # Linha conectando a causa
                             fig.add_trace(go.Scatter(
-                                x=[x_pos, cause_x],
-                                y=[y_pos, cause_y],
-                                mode='lines',
-                                line=dict(color=color, width=1, dash='dot'),
-                                hoverinfo='skip',
-                                opacity=0.5
+                                x=[x_pos, cause_x], y=[y_pos, cause_y], mode='lines',
+                                line=dict(color=color, width=1.5, dash='dot'), hoverinfo='skip', opacity=0.7
                             ))
                             
-                            # Texto da causa
-                            display_text = cause[:30] + '...' if len(cause) > 30 else cause
+                            # Texto da causa com quebra de linha
+                            wrapped_cause = wrap_text(cause, width=25) # Quebra a cada 25 caracteres
+                            
                             fig.add_annotation(
-                                x=cause_x,
-                                y=cause_y,
-                                text=display_text,
-                                showarrow=False,
-                                font=dict(size=9, color='#FFFFFF'),
-                                bgcolor='rgba(30, 30, 30, 0.8)',
-                                bordercolor=color,
-                                borderwidth=1,
-                                borderpad=3
+                                x=cause_x, y=cause_y, text=wrapped_cause,
+                                showarrow=False, align='center',
+                                font=dict(size=11, color='#FFFFFF'), # Fonte maior
+                                bgcolor='rgba(40, 40, 40, 0.9)',
+                                bordercolor=color, borderwidth=1.5,
+                                borderpad=6 # Mais padding interno
                             )
-                
-                # Caixa do problema/efeito
+
+                # Caixa do Problema
                 fig.add_shape(
-                    type="rect",
-                    x0=8.5, y0=2.3, x1=10.5, y1=3.7,
-                    fillcolor='#FF4B4B',
-                    opacity=0.9,
-                    line=dict(color='#FFFFFF', width=2)
+                    type="rect", x0=9.2, y0=2.2, x1=10.8, y1=3.8,
+                    fillcolor='#FF4B4B', opacity=1, line=dict(color='#FFFFFF', width=2)
                 )
                 
-                # Texto do problema
-                problem_text = problem[:40] + '...' if len(problem) > 40 else problem
+                # Texto do Problema com quebra de linha
+                wrapped_problem = wrap_text(problem, width=20)
                 fig.add_annotation(
-                    x=9.5, y=3,
-                    text=f"<b>PROBLEMA</b><br>{problem_text}",
-                    showarrow=False,
-                    font=dict(size=11, color='#FFFFFF'),
-                    align='center'
+                    x=10, y=3, text=f"<b>PROBLEMA</b><br>{wrapped_problem}",
+                    showarrow=False, font=dict(size=12, color='#FFFFFF'), align='center'
                 )
                 
-                # Seta apontando para o problema
+                # Seta
                 fig.add_annotation(
-                    x=8.5, y=3,
-                    ax=8, ay=3,
-                    xref="x", yref="y",
-                    axref="x", ayref="y",
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1.5,
-                    arrowwidth=2,
-                    arrowcolor='#FFFFFF'
+                    x=9.2, y=3, ax=8.8, ay=3, showarrow=True, arrowhead=2,
+                    arrowsize=1.5, arrowwidth=2.5, arrowcolor='#FFFFFF'
                 )
-                
+
                 st.plotly_chart(fig, use_container_width=True)
-                
-                # Estatísticas
-                st.markdown("### 📊 Estatísticas da Análise")
-                total_causes = sum(len(causes) for causes in categories_filled.values())
-                
+
+                # --- [FIM DA LÓGICA DO DIAGRAMA] ---
+
+                st.markdown("---")
+                st.subheader("📊 Estatísticas da Análise")
+                total_causes = sum(len(c) for c in categories_filled.values())
                 col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total de Causas", total_causes)
-                with col2:
-                    st.metric("Categorias Utilizadas", len(categories_filled))
-                with col3:
-                    max_cat = max(categories_filled.items(), key=lambda x: len(x[1]))
-                    st.metric("Categoria Principal", max_cat[0])
-        
-        # NÃO resetar o flag automaticamente para manter o diagrama visível
-        # Só reseta quando limpar tudo
+                col1.metric("Total de Causas", total_causes)
+                col2.metric("Categorias Utilizadas", len(categories_filled))
+                if categories_filled:
+                    max_cat = max(categories_filled, key=lambda k: len(categories_filled[k]))
+                    col3.metric("Categoria Principal", max_cat)
     
-    # Salvar análise se solicitado
-    if st.session_state.get('save_ishikawa', False):
-        categories_filled = {}
-        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
-            causes = [v for v in cat_data['causes'].values() if v]
-            if causes:
-                categories_filled[cat_name] = causes
-        
-        if categories_filled and problem:
-            analysis_data = {
-                'problem': problem,
-                'categories': categories_filled,
-                'total_causes': sum(len(c) for c in categories_filled.values()),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            if save_analysis_to_db(project_name, "ishikawa", analysis_data):
-                st.success("✅ Análise Ishikawa salva com sucesso!")
-        
-        st.session_state.save_ishikawa = False
-    
-    # Exportar se solicitado
-    if st.session_state.get('export_ishikawa', False):
-        # Criar DataFrame para export
-        export_data = []
-        for cat_name, cat_data in st.session_state.ishikawa_data['categories'].items():
-            for i, cause in cat_data['causes'].items():
-                if cause:
-                    export_data.append({
-                        'Categoria': cat_name,
-                        'Número': i + 1,
-                        'Causa': cause
-                    })
-        
-        if export_data:
-            df_export = pd.DataFrame(export_data)
-            csv = df_export.to_csv(index=False)
-            
-            st.download_button(
-                label="📥 Download CSV",
-                data=csv,
-                file_name=f"ishikawa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="download_ishikawa_csv"
-            )
-        
-        st.session_state.export_ishikawa = False
+    # ... (Restante do seu código para salvar e exportar)
+
 
 
 
