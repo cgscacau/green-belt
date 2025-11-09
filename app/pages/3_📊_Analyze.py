@@ -1849,9 +1849,16 @@ with tabs[5]:
                     }
                     
                     # Calcular quantis para Q-Q plot
-                    theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, len(test_data)))
-                    sample_quantiles = np.sort(test_data)
+                    n = len(test_data)
+                    # Usar fórmula correta: (i - 0.5) / n
+                    probabilities = (np.arange(1, n + 1) - 0.5) / n
+                    theoretical_quantiles = stats.norm.ppf(probabilities)
                     
+                    # Padronizar os dados da amostra
+                    sample_data_sorted = np.sort(test_data)
+                    # Padronizar para ter média 0 e desvio 1
+                    sample_quantiles = (sample_data_sorted - test_data.mean()) / test_data.std()
+                                        
                     # Salvar no session_state
                     st.session_state.normality_results = {
                         'variable': selected_col,
@@ -2000,33 +2007,73 @@ with tabs[5]:
                         st.plotly_chart(fig, use_container_width=True)
                     
                     with col_viz2:
-                        # Q-Q Plot
+                        # Q-Q Plot corrigido
                         fig_qq = go.Figure()
+                        
+                        # Pontos dos dados
                         fig_qq.add_trace(go.Scatter(
                             x=results['theoretical_quantiles'], 
                             y=results['sample_quantiles'],
                             mode='markers', 
-                            name='Dados',
-                            marker=dict(size=6, color='blue', opacity=0.6)
+                            name='Dados Observados',
+                            marker=dict(size=8, color='#3498DB', opacity=0.7),
+                            hovertemplate='Teórico: %{x:.2f}<br>Amostral: %{y:.2f}<extra></extra>'
                         ))
                         
-                        # Linha de referência
-                        min_val = min(min(results['theoretical_quantiles']), min(results['sample_quantiles']))
-                        max_val = max(max(results['theoretical_quantiles']), max(results['sample_quantiles']))
+                        # Linha de referência (y = x)
+                        qq_min = min(min(results['theoretical_quantiles']), min(results['sample_quantiles']))
+                        qq_max = max(max(results['theoretical_quantiles']), max(results['sample_quantiles']))
+                        
+                        # Adicionar margem
+                        margin = (qq_max - qq_min) * 0.1
+                        qq_min -= margin
+                        qq_max += margin
                         
                         fig_qq.add_trace(go.Scatter(
-                            x=[min_val, max_val],
-                            y=[min_val, max_val],
+                            x=[qq_min, qq_max],
+                            y=[qq_min, qq_max],
                             mode='lines', 
-                            name='Linha de Referência',
-                            line=dict(color='red', dash='dash', width=2)
+                            name='Distribuição Normal Perfeita',
+                            line=dict(color='#E74C3C', dash='dash', width=3)
+                        ))
+                        
+                        # Adicionar banda de confiança (opcional)
+                        # Banda de 95% de confiança
+                        se = 1.36 / np.sqrt(len(results['theoretical_quantiles']))
+                        upper_band = [qq_min + i * (qq_max - qq_min) / 100 + 1.96 * se for i in range(101)]
+                        lower_band = [qq_min + i * (qq_max - qq_min) / 100 - 1.96 * se for i in range(101)]
+                        x_band = [qq_min + i * (qq_max - qq_min) / 100 for i in range(101)]
+                        
+                        fig_qq.add_trace(go.Scatter(
+                            x=x_band,
+                            y=upper_band,
+                            mode='lines',
+                            line=dict(width=0),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ))
+                        
+                        fig_qq.add_trace(go.Scatter(
+                            x=x_band,
+                            y=lower_band,
+                            mode='lines',
+                            fill='tonexty',
+                            fillcolor='rgba(231, 76, 60, 0.1)',
+                            line=dict(width=0),
+                            name='IC 95%',
+                            hoverinfo='skip'
                         ))
                         
                         fig_qq.update_layout(
-                            title="Q-Q Plot (Quantil-Quantil)",
-                            xaxis_title="Quantis Teóricos (Normal)",
-                            yaxis_title="Quantis Amostrais",
-                            height=400
+                            title="Q-Q Plot (Quantil-Quantil)<br><sub>Comparação com Distribuição Normal</sub>",
+                            xaxis_title="Quantis Teóricos (Normal Padrão)",
+                            yaxis_title="Quantis Amostrais (Padronizados)",
+                            height=500,
+                            showlegend=True,
+                            hovermode='closest',
+                            # Forçar mesma escala nos dois eixos
+                            xaxis=dict(scaleanchor="y", scaleratio=1),
+                            yaxis=dict(scaleanchor="x", scaleratio=1)
                         )
                         st.plotly_chart(fig_qq, use_container_width=True)
                     
