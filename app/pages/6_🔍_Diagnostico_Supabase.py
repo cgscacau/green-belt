@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import os
+import sys
 from supabase import create_client, Client
 
 # Configuração da página
