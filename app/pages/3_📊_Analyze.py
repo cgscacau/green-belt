@@ -1214,7 +1214,8 @@ with tabs[4]:
                 with col_export:
                     export_test = st.button("📥 Exportar", key="export_t1", use_container_width=True)
                 
-                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                current_results = st.session_state.get('hypothesis_results') or {}
+                if execute_test or (current_results.get('test_type') == test_type):
                     if execute_test:
                         sample_data = data[value_col].dropna()
                         t_stat, p_value = stats.ttest_1samp(sample_data, mu0)
@@ -1286,7 +1287,8 @@ with tabs[4]:
                     with col_export:
                         export_test = st.button("📥 Exportar", key="export_t2", use_container_width=True)
                     
-                    if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                    current_results = st.session_state.get('hypothesis_results') or {}
+                    if execute_test or (current_results.get('test_type') == test_type):
                         if execute_test:
                             data1 = data[data[group_col] == group1][value_col].dropna()
                             data2 = data[data[group_col] == group2][value_col].dropna()
@@ -1375,7 +1377,8 @@ with tabs[4]:
                 with col_export:
                     export_test = st.button("📥 Exportar", key="export_tp", use_container_width=True)
                 
-                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                current_results = st.session_state.get('hypothesis_results') or {}
+                if execute_test or (current_results.get('test_type') == test_type):
                     if execute_test:
                         paired_data = data[[col1_select, col2_select]].dropna()
                         data1 = paired_data[col1_select]
@@ -1459,7 +1462,8 @@ with tabs[4]:
                     with col_export:
                         export_test = st.button("📥 Exportar", key="export_mw", use_container_width=True)
                     
-                    if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                    current_results = st.session_state.get('hypothesis_results') or {}
+                    if execute_test or (current_results.get('test_type') == test_type):
                         if execute_test:
                             data1 = data[data[group_col] == group1][value_col].dropna()
                             data2 = data[data[group_col] == group2][value_col].dropna()
@@ -1534,7 +1538,8 @@ with tabs[4]:
                 with col_export:
                     export_test = st.button("📥 Exportar", key="export_w", use_container_width=True)
                 
-                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                current_results = st.session_state.get('hypothesis_results') or {}
+                if execute_test or (current_results.get('test_type') == test_type):
                     if execute_test:
                         paired_data = data[[col1_select, col2_select]].dropna()
                         data1 = paired_data[col1_select]
@@ -1606,7 +1611,8 @@ with tabs[4]:
                 with col_export:
                     export_test = st.button("📥 Exportar", key="export_chi", use_container_width=True)
                 
-                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                current_results = st.session_state.get('hypothesis_results') or {}
+                if execute_test or (current_results.get('test_type') == test_type):
                     if execute_test:
                         contingency_table = pd.crosstab(data[cat1], data[cat2])
                         chi2, p_value, dof, expected = stats.chi2_contingency(contingency_table)
@@ -1668,7 +1674,8 @@ with tabs[4]:
                 with col_export:
                     export_test = st.button("📥 Exportar", key="export_f", use_container_width=True)
                 
-                if execute_test or (st.session_state.get('hypothesis_results', {}).get('test_type') == test_type):
+                current_results = st.session_state.get('hypothesis_results') or {}
+                if execute_test or (current_results.get('test_type') == test_type):
                     if execute_test:
                         contingency_table = pd.crosstab(data[cat1], data[cat2])
                         
