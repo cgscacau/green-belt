@@ -150,8 +150,8 @@ with st.sidebar:
     st.divider()
     st.subheader("🛠️ Ferramentas")
     
-    if st.button("🔍 Diagnóstico Supabase", use_container_width=True):
-        st.switch_page("pages/6_🔍_Diagnostico_Supabase.py")
+    if st.button("🔍 Diagnóstico Supabase", use_container_width=True, key="btn_diag"):
+        st.switch_page("app/pages/6_🔍_Diagnostico_Supabase.py")
 
 # Conteúdo principal
 # Criar 3 colunas para métricas
