@@ -17,6 +17,21 @@ st.set_page_config(
 
 # ========================= FUNÇÕES AUXILIARES =========================
 
+def clean_dataframe_for_json(df):
+    """Limpa DataFrame para ser compatível com JSON"""
+    df_clean = df.copy()
+    
+    # Substituir valores problemáticos
+    df_clean = df_clean.replace([np.nan, np.inf, -np.inf], None)
+    
+    # Converter tipos de dados problemáticos
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            df_clean[col] = df_clean[col].astype(str)
+        elif df_clean[col].dtype in ['datetime64[ns]', 'timedelta64[ns]']:
+            df_clean[col] = df_clean[col].astype(str)
+    
+    return df_clean
 # Inicializar Supabase
 @st.cache_resource
 def init_supabase():
@@ -130,19 +145,38 @@ def save_measurements(project_name, measurements_df):
     try:
         # Preparar dados para inserção
         records = []
-        for _, row in measurements_df.iterrows():
-            record = {
-                'project_name': project_name,
-                'metric_name': 'measurement',
-                'metric_value': float(row.iloc[0]) if len(row) > 0 else 0,
-                'measurement_date': datetime.now().date().isoformat(),
-                'created_at': datetime.now().isoformat()
-            }
-            records.append(record)
+        for idx, row in measurements_df.iterrows():
+            # Pegar o primeiro valor numérico válido da linha
+            value = None
+            for col_val in row:
+                try:
+                    val = float(col_val)
+                    # Verificar se não é NaN ou infinito
+                    if not (np.isnan(val) or np.isinf(val)):
+                        value = val
+                        break
+                except (ValueError, TypeError):
+                    continue
+            
+            # Se encontrou um valor válido, adicionar
+            if value is not None:
+                record = {
+                    'project_name': project_name,
+                    'metric_name': 'measurement',
+                    'metric_value': value,
+                    'measurement_date': datetime.now().date().isoformat(),
+                    'created_at': datetime.now().isoformat()
+                }
+                records.append(record)
         
-        # Inserir em lote
-        response = supabase.table('measurements').insert(records).execute()
-        return True
+        # Inserir apenas se houver registros válidos
+        if records:
+            response = supabase.table('measurements').insert(records).execute()
+            return True
+        else:
+            st.warning("⚠️ Nenhum valor numérico válido encontrado para salvar")
+            return False
+            
     except Exception as e:
         st.error(f"Erro ao salvar medições: {str(e)}")
         return False
@@ -170,8 +204,12 @@ def save_process_data(project_name, data_df):
         return False
     
     try:
+        # Limpar dados antes de salvar
+        # Substituir NaN, inf, -inf por None
+        data_df_clean = data_df.replace([np.nan, np.inf, -np.inf], None)
+        
         # Converter DataFrame para JSON
-        data_json = data_df.to_dict('records')
+        data_json = data_df_clean.to_dict('records')
         
         record = {
             'project_name': project_name,
@@ -185,6 +223,7 @@ def save_process_data(project_name, data_df):
     except Exception as e:
         st.error(f"Erro ao salvar dados do processo: {str(e)}")
         return False
+
 
 # Função para carregar dados do processo
 @st.cache_data(ttl=60)
